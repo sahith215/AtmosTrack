@@ -6,7 +6,7 @@ import numpy as np
 # ---------- Config ----------
 MODEL_PATH = "models/AtmosTrack_Global_Model.pkl"
 FEATURES_PATH = "models/feature_names.pkl"
-SOURCES = ['Vehicle', 'Industry', 'Construction', 'Clean']
+SOURCES = ["Vehicle", "Industry", "Construction", "Clean"]
 MODEL_ACCURACY = 95.2  # from your training
 
 # ---------- Load model ----------
@@ -27,23 +27,27 @@ class FeatureInput(BaseModel):
 @app.post("/classify")
 def classify_source(data: FeatureInput):
     # keep feature order consistent with training
-    x = np.array([[ 
-        data.VOC_avg,
-        data.VOC_std,
-        data.CO2_avg,
-        data.CO2_std,
-        data.Vibration_amp,
-        data.Vibration_freq,
-        data.Hour
+    x = np.array([[
+        float(data.VOC_avg),
+        float(data.VOC_std),
+        float(data.CO2_avg),
+        float(data.CO2_std),
+        float(data.Vibration_amp),
+        float(data.Vibration_freq),
+        int(data.Hour),
     ]])
 
     proba = model.predict_proba(x)[0]
     idx = int(np.argmax(proba))
     label = SOURCES[idx]
-    confidence = float(proba[idx] * 100.0)
+
+    # clamp to [0, 100] just in case
+    raw_conf = float(proba[idx])
+    raw_conf = max(0.0, min(1.0, raw_conf))
+    confidence = raw_conf * 100.0
 
     return {
         "label": label,
         "confidence": round(confidence, 1),
-        "modelAccuracy": MODEL_ACCURACY
+        "modelAccuracy": MODEL_ACCURACY,
     }

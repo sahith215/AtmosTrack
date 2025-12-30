@@ -1,14 +1,20 @@
-const express = require('express');
-const cors = require('cors');
-const http = require('http');
-const socketIo = require('socket.io');
-const axios = require('axios');
+import 'dotenv/config';              // load .env
+import { connectDB } from './db.js'; // MongoDB connection
+
+import express from 'express';
+import cors from 'cors';
+import http from 'http';
+import { Server as SocketIO } from 'socket.io';
+import axios from 'axios';
+import { Reading } from './models/Reading.js'; // NEW
+
+connectDB(); // connect to Atlas
 
 const app = express();
 const server = http.createServer(app);
 
 // ✅ CORS for Vite (port 5173)
-const io = socketIo(server, {
+const io = new SocketIO(server, {
   cors: {
     origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
     methods: ['GET', 'POST'],
@@ -35,18 +41,37 @@ let sensorHistory = [];
 const WINDOW_SIZE = 12; // ~60s if ESP32 sends every 5s
 let aiWindow = [];
 
+// 🔹 Helper to make model output coherent with health conditions
+function adjustSourceClassification(sensorReading, modelResult) {
+  if (!modelResult || !sensorReading.co2 || !sensorReading.aiFeatures) {
+    return modelResult;
+  }
+
+  const status = sensorReading.co2.status;
+  const co2 = sensorReading.co2.ppm;
+
+  const aqiIsGood = status === 'OUTDOOR_FRESH' || status === 'GOOD';
+  const co2IsLow = co2 < 450;
+  const vibAmp = sensorReading.aiFeatures.Vibration_amp;
+  const vibIsLow = vibAmp !== null && vibAmp < 3000;
+
+  if (aqiIsGood && co2IsLow && vibIsLow && modelResult.confidence < 70) {
+    return {
+      label: 'Clean',
+      confidence: 100,
+      modelAccuracy: modelResult.modelAccuracy,
+    };
+  }
+
+  return modelResult;
+}
+
 // API Routes
 app.get('/', (req, res) => {
   res.json({
     message: '🌍 AtmosTrack Multi-Sensor Backend Running!',
     version: '3.1.0 - Full Sensor Suite',
-    sensors: [
-      'DHT11 (Temp/Humidity)',
-      'MG811 (CO2)',
-      'MQ135 (Air Quality)',
-      'MPU6050 (IMU)',
-      'GPS',
-    ],
+    sensors: ['DHT11 (Temp/Humidity)', 'MG811 (CO2)', 'MQ135 (Air Quality)', 'MPU6050 (IMU)', 'GPS'],
     endpoints: {
       sensorData: '/api/sensor-data',
       latest: '/api/latest',
@@ -55,19 +80,32 @@ app.get('/', (req, res) => {
   });
 });
 
+// simple helper for now: rough AQI + emissions estimate
+function estimateAQIFromMQ135(raw) {
+  if (raw == null) return 75;
+  return Math.max(0, Math.min(500, Math.round((raw / 4095) * 300)));
+}
+
+function estimateEmissionsKgFromCO2ppm(ppm) {
+  if (!ppm) return 0;
+  // placeholder: ppm -> kg CO2eq for 1 reading interval
+  return Number((ppm / 1_000_000_000).toFixed(8));
+}
+
 // 🔧 ESP32 sends full sensor suite here
-app.post('/api/sensor-data', (req, res) => {
+app.post('/api/sensor-data', async (req, res) => {
   const {
     deviceId = 'ATMOSTRACK-01',
+    sessionId = 'default-session',
     environment = {},
     imu = {},
     location = {},
     purification = {},
     co2Level = null, // MG811
     mq135 = {}, // MQ135 raw + volt
+    context = 'indoor', // you can send this from ESP32/frontend
   } = req.body;
 
-  // 🆕 Process CO2 data (MG811) if available
   const processedCO2 =
     co2Level !== null
       ? {
@@ -76,6 +114,8 @@ app.post('/api/sensor-data', (req, res) => {
           healthAdvice: getCO2HealthAdvice(Number(co2Level)),
         }
       : null;
+
+  const timestamp = new Date();
 
   const sensorReading = {
     deviceId,
@@ -99,12 +139,12 @@ app.post('/api/sensor-data', (req, res) => {
     purification: {
       on: purification.on ?? false,
     },
-    co2: processedCO2, // MG811
+    co2: processedCO2,
     mq135: {
       raw: mq135.raw ?? null,
       volt: mq135.volt ?? null,
     },
-    timestamp: new Date().toISOString(),
+    timestamp: timestamp.toISOString(),
   };
 
   // 🔹 Maintain rolling window for AI
@@ -113,7 +153,6 @@ app.post('/api/sensor-data', (req, res) => {
     aiWindow = aiWindow.slice(-WINDOW_SIZE);
   }
 
-  // 🔹 Example AI features from window (CO2_avg, CO2_std, Hour)
   let CO2_avg = null;
   let CO2_std = null;
 
@@ -124,9 +163,8 @@ app.post('/api/sensor-data', (req, res) => {
   if (co2Values.length > 0) {
     const mean = co2Values.reduce((a, b) => a + b, 0) / co2Values.length;
     const variance =
-      co2Values
-        .map((v) => (v - mean) ** 2)
-        .reduce((a, b) => a + b, 0) / co2Values.length;
+      co2Values.map((v) => (v - mean) ** 2).reduce((a, b) => a + b, 0) /
+      co2Values.length;
     CO2_avg = mean;
     CO2_std = Math.sqrt(variance);
   }
@@ -134,11 +172,8 @@ app.post('/api/sensor-data', (req, res) => {
   const now = new Date();
   const Hour = now.getHours();
 
-  // 🔹 Build full AI features
   const VOC_values = aiWindow
-    .map((r) =>
-      r.mq135 && typeof r.mq135.raw === 'number' ? r.mq135.raw : null
-    )
+    .map((r) => (r.mq135 && typeof r.mq135.raw === 'number' ? r.mq135.raw : null))
     .filter((v) => v !== null);
 
   let VOC_avg = null;
@@ -152,7 +187,6 @@ app.post('/api/sensor-data', (req, res) => {
     VOC_std = Math.sqrt(varianceVOC);
   }
 
-  // Simple vibration amplitude from IMU
   const vibValues = aiWindow
     .map((r) =>
       r.imu && r.imu.ax !== null && r.imu.ay !== null && r.imu.az !== null
@@ -165,8 +199,7 @@ app.post('/api/sensor-data', (req, res) => {
   let Vibration_freq = null;
   if (vibValues.length > 0) {
     Vibration_amp = vibValues.reduce((a, b) => a + b, 0) / vibValues.length;
-    // crude frequency proxy: count of “high vib” readings in window
-    const threshold = 15000; // tune based on your IMU range
+    const threshold = 15000;
     Vibration_freq = aiWindow.filter((r) => {
       const ax = r.imu.ax ?? 0;
       const ay = r.imu.ay ?? 0;
@@ -189,25 +222,15 @@ app.post('/api/sensor-data', (req, res) => {
     Hour,
   };
 
-  // Store data
   latestSensorData = sensorReading;
   sensorHistory.push(sensorReading);
-
-  // Keep only last 100 readings
   if (sensorHistory.length > 100) {
     sensorHistory = sensorHistory.slice(-100);
   }
 
-  // Real-time update to frontend (baseline reading)
   io.emit('sensorUpdate', sensorReading);
 
-  // 🔹 Call Python AI server (non‑blocking)
-  if (
-    VOC_avg !== null &&
-    CO2_avg !== null &&
-    Vibration_amp !== null &&
-    Vibration_freq !== null
-  ) {
+  if (VOC_avg !== null && CO2_avg !== null && Vibration_amp !== null && Vibration_freq !== null) {
     axios
       .post('http://localhost:8000/classify', {
         VOC_avg,
@@ -219,7 +242,9 @@ app.post('/api/sensor-data', (req, res) => {
         Hour,
       })
       .then((response) => {
-        sensorReading.sourceClassification = response.data;
+        const rawResult = response.data;
+        const adjusted = adjustSourceClassification(sensorReading, rawResult);
+        sensorReading.sourceClassification = adjusted;
         latestSensorData = sensorReading;
         io.emit('sensorUpdate', sensorReading);
       })
@@ -228,16 +253,11 @@ app.post('/api/sensor-data', (req, res) => {
       });
   }
 
-  // Logging (DHT + MG811 + MQ135 + MPU + GPS)
-  const co2Message = processedCO2
-    ? ` | CO2: ${processedCO2.ppm} ppm (${processedCO2.status})`
-    : '';
-
+  const co2Message = processedCO2 ? ` | CO2: ${processedCO2.ppm} ppm (${processedCO2.status})` : '';
   const mqMessage =
     sensorReading.mq135 && sensorReading.mq135.raw !== null
       ? ` | MQ135: raw=${sensorReading.mq135.raw} V=${sensorReading.mq135.volt}`
       : '';
-
   const imuMessage =
     sensorReading.imu && sensorReading.imu.ax !== null
       ? ` | MPU: ax=${sensorReading.imu.ax} ay=${sensorReading.imu.ay} az=${sensorReading.imu.az}`
@@ -250,6 +270,66 @@ app.post('/api/sensor-data', (req, res) => {
       `v=${sensorReading.location.speed}km/h | ` +
       `PUR=${sensorReading.purification.on ? 'ON' : 'OFF'}`
   );
+
+  // ------- NEW: build Reading document for MongoDB -------
+  try {
+    const aqi = estimateAQIFromMQ135(sensorReading.mq135.raw);
+    const co2ppm = processedCO2 ? processedCO2.ppm : 0;
+    const estimatedCO2eqKg = estimateEmissionsKgFromCO2ppm(co2ppm);
+
+    const readingDoc = {
+      deviceId,
+      sessionId,
+      timestamp,
+      location: {
+        lat: sensorReading.location.lat,
+        lng: sensorReading.location.lng,
+        altitude: null,
+        context,
+      },
+      environment: {
+        temperature: sensorReading.environment.temperature,
+        humidity: sensorReading.environment.humidity,
+      },
+      air: {
+        aqi,
+        co2ppm,
+        mq135Raw: sensorReading.mq135.raw,
+        mq135Volt: sensorReading.mq135.volt,
+      },
+      aiFeatures: {
+        vocAvg: VOC_avg,
+        vocStd: VOC_std,
+        co2Avg: CO2_avg,
+        co2Std: CO2_std,
+        vibrationAmp: Vibration_amp,
+        vibrationFreq: Vibration_freq,
+        Hour,
+      },
+      sourceClassification: sensorReading.sourceClassification
+        ? {
+            label: sensorReading.sourceClassification.label,
+            confidence: sensorReading.sourceClassification.confidence,
+          }
+        : {
+            label: 'Unknown',
+            confidence: 0,
+          },
+      emissions: {
+        estimatedCO2eqKg,
+        method: 'model',
+      },
+      meta: {
+        firmwareVersion: '1.0.0',
+        gridRegion: 'IN-SOUTH',
+      },
+    };
+
+    await Reading.create(readingDoc);
+  } catch (err) {
+    console.error('Error saving Reading to MongoDB:', err.message);
+  }
+  // -------------------------------------------------------
 
   res.json({ success: true, data: sensorReading });
 });
@@ -312,14 +392,12 @@ function getCO2HealthAdvice(ppm) {
 // Server listen (ESP32 needs 0.0.0.0)
 const PORT = 5000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(
-    `🚀 AtmosTrack Multi-Sensor Backend running on http://0.0.0.0:${PORT}`
-  );
+  console.log(`🚀 AtmosTrack Multi-Sensor Backend running on http://0.0.0.0:${PORT}`);
   console.log('🔗 Accepting connections from Vite frontend on port 5173');
   console.log('📡 WebSocket CORS enabled for localhost:5173');
   console.log('🌍 Sensors: DHT11 + MG811 + MQ135 + MPU6050 + GPS');
   console.log('📊 API Endpoints:');
   console.log('   POST /api/sensor-data - ESP32 data input');
-  console.log('   GET  /api/latest      - Latest readings');
-  console.log('   GET  /api/health      - System health');
+  console.log('   GET  /api/latest       - Latest readings');
+  console.log('   GET  /api/health       - System health');
 });

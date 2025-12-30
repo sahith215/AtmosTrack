@@ -82,16 +82,16 @@ interface LocationHealthData {
 }
 
 const HealthAlerts: React.FC = () => {
-  const [selectedLocation, setSelectedLocation] = useState('vizianagaram-live');
+  // pinned for now – logic uses GPS to decide UI text
+  const [selectedLocation] = useState('vizianagaram-live');
   const [isTransitioning, setIsTransitioning] = useState(false);
 
   // 🔥 Real-time backend data states
   const [liveData, setLiveData] = useState<SensorData | null>(null);
   const [isOnline, setIsOnline] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
-  const [secondsUntilNext, setSecondsUntilNext] = useState<number>(30);
+  const [secondsUntilNext, setSecondsUntilNext] = useState<number>(5);
 
-  // 🔥 Conversion functions (legacy, now using mq135 raw)
   const convertRawToAQI = (rawValue: number): number => {
     try {
       const aqi = Math.floor((rawValue / 4095) * 500);
@@ -117,7 +117,7 @@ const HealthAlerts: React.FC = () => {
     }
   };
 
-  // 🔥 30-SECOND UPDATES: Smart health alert timing
+  // 🔥 5-SECOND UPDATES: Smart health alert timing
   const getHealthProfile = (
     aqi: number,
     co2: number,
@@ -126,7 +126,7 @@ const HealthAlerts: React.FC = () => {
     if (aqi > 300 || co2 > 5000) {
       return {
         riskLevel: 'hazardous',
-        updateInterval: 30 * 1000,
+        updateInterval: 5 * 1000,
         medicalBasis: 'WHO Emergency Protocol - Immediate evacuation required',
         recommendations: [
           '🚨 EVACUATE IMMEDIATELY - Life-threatening conditions',
@@ -141,7 +141,7 @@ const HealthAlerts: React.FC = () => {
     } else if (aqi > 200 || co2 > 3000) {
       return {
         riskLevel: 'very_unhealthy',
-        updateInterval: 30 * 1000,
+        updateInterval: 5 * 1000,
         medicalBasis:
           'EPA Air Quality Guidelines - Serious health effects for everyone',
         recommendations: [
@@ -157,11 +157,11 @@ const HealthAlerts: React.FC = () => {
     } else if (aqi > 150 || co2 > 1500) {
       return {
         riskLevel: 'high',
-        updateInterval: 30 * 1000,
+        updateInterval: 5 * 1000,
         medicalBasis:
           'WHO 15-minute guideline - Short-term exposure health effects',
         recommendations: [
-          '🔴 AVOID OUTDOOR ACTIVITIES - Health effects for everyone',
+          'AVOID OUTDOOR ACTIVITIES - Health effects for everyone',
           'Use protective masks if must go outside',
           'Indoor activities strongly recommended',
           'Children and elderly should stay indoors',
@@ -173,11 +173,11 @@ const HealthAlerts: React.FC = () => {
     } else if (aqi > 100 || co2 > 800) {
       return {
         riskLevel: 'moderate',
-        updateInterval: 30 * 1000,
+        updateInterval: 5 * 1000,
         medicalBasis:
           'EPA 30-minute standard - Sensitive population effects',
         recommendations: [
-          '🟠 SENSITIVE GROUPS LIMIT EXPOSURE - Children, elderly, respiratory conditions',
+          'Sensitive Groups Limit Exposure - Children, elderly, respiratory conditions',
           'Reduce prolonged outdoor activities',
           'Consider indoor alternatives for exercise',
           'Monitor symptoms and seek medical advice if needed',
@@ -189,10 +189,10 @@ const HealthAlerts: React.FC = () => {
     } else {
       return {
         riskLevel: 'safe',
-        updateInterval: 30 * 1000,
+        updateInterval: 5 * 1000,
         medicalBasis: 'WHO/EPA standards - No health concerns',
         recommendations: [
-          '🟢 EXCELLENT CONDITIONS - Ideal for all outdoor activities',
+          'Excellent Condition - Ideal for all outdoor activities',
           'Perfect for sports, exercise, and recreation',
           'Safe for sensitive individuals including children',
           'Optimal conditions for cardiovascular activities',
@@ -204,7 +204,7 @@ const HealthAlerts: React.FC = () => {
     }
   };
 
-  // 🔥 Backend connection with 30-second timing
+  // 🔥 Backend connection with 5-second timing
   useEffect(() => {
     let socket: any = null;
 
@@ -224,7 +224,7 @@ const HealthAlerts: React.FC = () => {
             console.log('🏥 Health alert data updated:', data);
             setLiveData(data);
             setLastUpdate(new Date());
-            setSecondsUntilNext(30);
+            setSecondsUntilNext(5);
           });
 
           socket.on('disconnect', () => {
@@ -253,7 +253,7 @@ const HealthAlerts: React.FC = () => {
         setLiveData(result.data as SensorData);
         setIsOnline(result.isOnline);
         setLastUpdate(new Date());
-        setSecondsUntilNext(30);
+        setSecondsUntilNext(5);
       }
     } catch (error) {
       console.error('Health alerts: Error fetching data:', error);
@@ -269,7 +269,7 @@ const HealthAlerts: React.FC = () => {
           if (isOnline) {
             fetchLatestData();
           }
-          return 30;
+          return 5;
         }
         return prev - 1;
       });
@@ -292,7 +292,7 @@ const HealthAlerts: React.FC = () => {
           ? liveData.co2.ppm
           : 420,
       description:
-        '🔴 LIVE ESP32 sensor monitoring - Real-time air quality data from hardware sensors',
+        'LIVE ESP32 sensor monitoring - Real-time air quality data from hardware sensors',
       pollutantInfo:
         liveData &&
         liveData.mq135.raw != null &&
@@ -376,7 +376,7 @@ const HealthAlerts: React.FC = () => {
       icon: TreePine,
       gradient: 'from-green-400 to-green-500',
       riskLevel: 'safe',
-      updateInterval: 30 * 1000,
+      updateInterval: 5 * 1000,
       medicalBasis: 'Standard demo data - Educational purpose',
     },
     'main-road': {
@@ -401,7 +401,7 @@ const HealthAlerts: React.FC = () => {
       icon: Car,
       gradient: 'from-orange-400 to-orange-500',
       riskLevel: 'moderate',
-      updateInterval: 30 * 1000,
+      updateInterval: 5 * 1000,
       medicalBasis: 'Standard demo data - Educational purpose',
     },
     'lake-area': {
@@ -425,7 +425,7 @@ const HealthAlerts: React.FC = () => {
       icon: TreePine,
       gradient: 'from-green-500 to-emerald-500',
       riskLevel: 'safe',
-      updateInterval: 30 * 1000,
+      updateInterval: 5 * 1000,
       medicalBasis: 'Standard demo data - Educational purpose',
     },
     'commercial': {
@@ -449,7 +449,7 @@ const HealthAlerts: React.FC = () => {
       icon: Building,
       gradient: 'from-red-400 to-orange-500',
       riskLevel: 'high',
-      updateInterval: 30 * 1000,
+      updateInterval: 5 * 1000,
       medicalBasis: 'Standard demo data - Educational purpose',
     },
     'residential': {
@@ -474,7 +474,7 @@ const HealthAlerts: React.FC = () => {
       icon: Home,
       gradient: 'from-orange-400 to-yellow-500',
       riskLevel: 'moderate',
-      updateInterval: 30 * 1000,
+      updateInterval: 5 * 1000,
       medicalBasis: 'Standard demo data - Educational purpose',
     },
   };
@@ -542,17 +542,22 @@ const HealthAlerts: React.FC = () => {
   const gaugePercentage = (currentLocation.aqi / 300) * 100;
   const LocationIcon = currentLocation.icon;
 
+  // 🔥 HONEST INDOOR DETECTION - No fake locations
+  const isIndoor =
+    !liveData ||
+    liveData.location.lat == null ||
+    liveData.location.lng == null;
+
   return (
     <div className="pt-16 p-6 space-y-8 animate-fade-in min-h-screen bg-gradient-to-br from-gray-50 to-orange-50">
-      {/* Header with Location Selector */}
+      {/* Header */}
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-800 mb-4">
             Health Advisory Dashboard
           </h1>
           <p className="text-lg text-gray-600 max-w-2xl mx-auto mb-4">
-            Real-time health recommendations with 30-second updates from
-            Vizianagaram sensors
+            Real-time health recommendations with 5-second updates from your AtmosTrack device
           </p>
           <div
             className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-medium ${
@@ -571,270 +576,94 @@ const HealthAlerts: React.FC = () => {
             ) : (
               <WifiOff className="h-4 w-4 mr-2" />
             )}
-            Vizianagaram {isOnline ? 'Live (30s updates)' : 'Offline'}
+            {isOnline ? 'Device online (5s updates)' : 'Device offline'}
           </div>
         </div>
 
-        {/* Location Selector */}
+        {/* Location Header – 100% HONEST indoor-aware */}
         <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-gray-200 mb-8">
-          <div className="flex flex-col sm:flex-row items-center justify-between space-y-4 sm:space-y-0">
-            <div className="flex items-center space-x-3">
-              <MapPin className="h-6 w-6 text-orange-500" />
-              <label className="text-lg font-semibold text-gray-800">
-                Health Advisory for:
-              </label>
-            </div>
-
-            <select
-              value={selectedLocation}
-              onChange={(e) => setSelectedLocation(e.target.value)}
-              className="px-4 py-3 bg-white border border-gray-300 rounded-xl font-medium text-gray-800 focus:ring-2 focus:ring-orange-400 focus:border-orange-400 transition-all duration-200 hover:border-orange-300 min-w-64 shadow-sm"
-            >
-              {Object.values(locationHealthData).map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name} {location.isLive ? '🔴 LIVE' : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="mt-4 pt-4 border-t border-gray-200">
+          <div className="flex flex-col gap-4">
+            {/* Row 1: title + indoor/outdoor chip */}
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-3">
-                <LocationIcon className="h-5 w-5 text-orange-500" />
-                <span className="font-semibold text-gray-800">
-                  {currentLocation.name}
-                </span>
-                <span
-                  className={`px-3 py-1 rounded-full text-sm font-medium border ${getRiskBadgeStyle(
-                    currentLocation.riskLevel
-                  )}`}
-                >
-                  {getRiskLevelText(currentLocation.riskLevel)}
-                </span>
-                {currentLocation.isLive && (
-                  <span className="px-2 py-1 bg-red-100 text-red-700 text-xs rounded-full animate-pulse">
-                    LIVE • 30s
+                <MapPin className="h-6 w-6 text-orange-500" />
+                <div className="flex flex-col">
+                  <span className="text-lg font-semibold text-gray-800">
+                    Current monitoring context
                   </span>
-                )}
-              </div>
-              <div className="text-right">
-                <span className="text-sm text-gray-500 flex items-center">
-                  <Clock className="h-4 w-4 mr-1" />
-                  {currentLocation.isLive
-                    ? `Updated ${lastUpdate.toLocaleTimeString()}`
-                    : 'Demo Data'}
-                </span>
-                {currentLocation.isLive && isOnline && (
-                  <div className="text-xs text-gray-400 mt-1 font-mono">
-                    Next: {secondsUntilNext}s
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* AQI + CO2 Gauge */}
-      <div className="max-w-4xl mx-auto">
-        <div
-          className={`
-          bg-gradient-to-br ${getAQIGradient(
-            currentLocation.aqi
-          )} rounded-3xl p-8 shadow-lg backdrop-blur-sm 
-          border border-white/50 transform hover:scale-[1.02] transition-all duration-500
-          ${
-            isTransitioning ? 'opacity-75 scale-95' : 'opacity-100 scale-100'
-          }
-          ${
-            currentLocation.riskLevel === 'hazardous' ||
-            currentLocation.riskLevel === 'very_unhealthy'
-              ? 'animate-pulse'
-              : ''
-          }
-        `}
-        >
-          <div className="text-center">
-            <div className="relative w-56 h-32 mx-auto mb-8">
-              <svg className="w-full h-full" viewBox="0 0 220 120">
-                <path
-                  d="M 30 90 A 80 80 0 0 1 190 90"
-                  fill="none"
-                  stroke="#f3f4f6"
-                  strokeWidth="8"
-                  strokeLinecap="round"
-                />
-                <path
-                  d="M 30 90 A 80 80 0 0 1 190 90"
-                  fill="none"
-                  stroke={getGaugeColor(currentLocation.aqi)}
-                  strokeWidth="8"
-                  strokeLinecap="round"
-                  strokeDasharray={`${gaugePercentage * 2.51} 251`}
-                  className="transition-all duration-1000 ease-out"
-                />
-                <circle
-                  cx="110"
-                  cy="90"
-                  r="4"
-                  fill={getGaugeColor(currentLocation.aqi)}
-                />
-              </svg>
-
-              <div className="absolute inset-0 flex flex-col items-center justify-end pb-2">
-                <div className="text-6xl font-bold text-gray-800 mb-1">
-                  {isTransitioning ? 0 : currentLocation.aqi}
+                  {isIndoor ? (
+                    <span className="text-sm text-gray-500">
+                      Indoor monitoring – device location is not shown
+                    </span>
+                  ) : (
+                    <span className="text-sm text-gray-500">
+                      GPS-based outdoor monitoring
+                    </span>
+                  )}
                 </div>
-                {currentLocation.co2 && (
-                  <div className="text-base font-medium text-gray-600 mb-1">
-                    CO₂: {currentLocation.co2} ppm
-                  </div>
-                )}
-                <div className="text-sm font-medium text-gray-600">
-                  {getRiskLevelText(currentLocation.riskLevel)}
-                </div>
+              </div>
+
+              <div
+                className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border ${
+                  isIndoor
+                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                    : 'bg-green-50 text-green-700 border-green-200'
+                }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full mr-2 ${
+                    isIndoor ? 'bg-amber-400' : 'bg-green-400'
+                  } animate-pulse`}
+                />
+                {isIndoor
+                  ? 'Outdoor mode – location active'
+                  : 'Indoor mode – no location shown'}
               </div>
             </div>
 
-            <div className="mt-6">
-              <p className="text-gray-700 text-lg max-w-2xl mx-auto mb-4">
-                {currentLocation.description}
-              </p>
-              {currentLocation.isLive &&
-                liveData &&
-                liveData.mq135.raw != null &&
-                liveData.mq135.volt != null && (
-                  <div className="text-sm text-gray-600 bg-white/50 rounded-lg p-3 max-w-xl mx-auto">
-                    📡 Live ESP32 Data: Raw ADC {liveData.mq135.raw}, Voltage{' '}
-                    {liveData.mq135.volt}V
-                    <div className="text-xs text-gray-500 mt-1">
-                      Updates every 30 seconds • Next update in{' '}
-                      {secondsUntilNext}s
+           {/* Row 2: name / indoor label + risk + live + time */}
+            <div className="pt-4 border-t border-gray-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <LocationIcon className="h-5 w-5 text-orange-500" />
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-gray-800">
+                      {isIndoor ?  currentLocation.name : 'Indoor monitoring session'}
+                    </span>
+                    <div className="flex items-center space-x-2 mt-1">
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-medium border ${getRiskBadgeStyle(
+                          currentLocation.riskLevel
+                        )}`}
+                      >
+                        {getRiskLevelText(currentLocation.riskLevel)}
+                      </span>
+                      {currentLocation.isLive && (
+                        <span className="px-2 py-1 bg-red-100 text-red-700 text-xs rounded-full flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                          LIVE • 5s
+                        </span>
+                      )}
+                      {isIndoor && (
+                        <span className="px-2 py-1 bg-amber-100 text-amber-700 text-xs rounded-full">
+                          Indoor – location hidden
+                        </span>
+                      )}
                     </div>
                   </div>
-                )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Health + Activity Panels */}
-      <div className="max-w-6xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Health Status */}
-          <div
-            className={`bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-gray-200 hover:shadow-xl transition-all duration-300 ${
-              currentLocation.isLive ? 'animate-pulse' : ''
-            }`}
-          >
-            <div className="flex items-center mb-6">
-              <div
-                className={`w-12 h-12 rounded-xl flex items-center justify-center bg-gradient-to-r ${currentLocation.gradient}`}
-              >
-                <Shield className="h-6 w-6 text-white" />
-              </div>
-              <h3 className="text-xl font-semibold text-gray-800 ml-4">
-                Health Status {currentLocation.isLive && '🔴'}
-              </h3>
-            </div>
-
-            <div className="space-y-4">
-              {currentLocation.recommendations.map((recommendation, index) => (
-                <div
-                  key={index}
-                  className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg"
-                >
-                  <div
-                    className={`w-2 h-2 rounded-full mt-2 ${
-                      currentLocation.riskLevel === 'safe'
-                        ? 'bg-green-400'
-                        : currentLocation.riskLevel === 'moderate'
-                        ? 'bg-orange-400'
-                        : currentLocation.riskLevel === 'high'
-                        ? 'bg-red-400'
-                        : currentLocation.riskLevel === 'very_unhealthy'
-                        ? 'bg-red-500'
-                        : 'bg-purple-500'
-                    }`}
-                  ></div>
-                  <p className="text-gray-700 text-sm leading-relaxed">
-                    {recommendation}
-                  </p>
                 </div>
-              ))}
-            </div>
 
-            <div className="mt-6 pt-4 border-t border-gray-200">
-              <div className="text-xs text-gray-500 mb-1">Medical Basis:</div>
-              <div className="text-sm text-gray-600">
-                {currentLocation.medicalBasis}
-              </div>
-              {currentLocation.isLive && (
-                <div className="text-xs text-green-600 mt-2 font-medium flex items-center">
-                  ⚡ Real-time updates every 30 seconds
-                  {isOnline && (
-                    <span className="ml-2 font-mono text-gray-500">
-                      ({secondsUntilNext}s)
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Activity Recommendations */}
-          <div
-            className={`bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-gray-200 hover:shadow-xl transition-all duration-300 ${
-              currentLocation.isLive ? 'animate-pulse' : ''
-            }`}
-          >
-            <div className="flex items-center mb-6">
-              <div
-                className={`w-12 h-12 rounded-xl flex items-center justify-center bg-gradient-to-r ${currentLocation.gradient}`}
-              >
-                <Activity className="h-6 w-6 text-white" />
-              </div>
-              <h3 className="text-xl font-semibold text-gray-800 ml-4">
-                Activity Recommendations {currentLocation.isLive && '🔴'}
-              </h3>
-            </div>
-
-            <div className="space-y-4">
-              <div className="p-4 bg-gradient-to-r from-gray-50 to-orange-50 rounded-lg">
-                <h4 className="font-semibold text-gray-800 mb-2">
-                  Recommended Activities
-                </h4>
-                <p className="text-gray-700 text-sm leading-relaxed">
-                  {currentLocation.activityAdvice}
-                </p>
-              </div>
-
-              <div className="p-4 bg-blue-50 rounded-lg">
-                <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
-                  <Clock className="h-4 w-4 mr-2" />
-                  {currentLocation.isLive ? 'Live Status' : 'Optimal Times'}
-                </h4>
-                <p className="text-gray-700 text-sm leading-relaxed">
-                  {currentLocation.bestTimes}
-                </p>
-              </div>
-
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <div className="text-xs text-gray-500 mb-1">
-                  Update Frequency:
-                </div>
-                <div className="text-sm font-medium text-gray-700 flex items-center justify-between">
-                  <span>
-                    Every 30 seconds
-                    {currentLocation.riskLevel === 'hazardous' &&
-                      ' (Emergency Protocol)'}
-                    {currentLocation.isLive && ' 📡 Live monitoring active'}
+                <div className="text-right">
+                  <span className="text-sm text-gray-500 flex items-center justify-end">
+                    <Clock className="h-4 w-4 mr-1" />
+                    {currentLocation.isLive
+                      ? `Updated ${lastUpdate.toLocaleTimeString()}`
+                      : 'Demo Data'}
                   </span>
                   {currentLocation.isLive && isOnline && (
-                    <span className="font-mono text-xs text-green-600">
-                      {secondsUntilNext}s
-                    </span>
+                    <div className="text-xs text-gray-400 mt-1 font-mono">
+                      Next: {secondsUntilNext}s
+                    </div>
                   )}
                 </div>
               </div>
@@ -842,6 +671,7 @@ const HealthAlerts: React.FC = () => {
           </div>
         </div>
       </div>
+
 
       {/* Source Classifier Card */}
       <div className="max-w-4xl mx-auto">
@@ -865,7 +695,9 @@ const HealthAlerts: React.FC = () => {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-sm text-gray-500">Predicted source</div>
+                  <div className="text-sm text-gray-500">
+                    Most likely source (experimental)
+                  </div>
                   <div className="text-2xl font-bold text-gray-800">
                     {liveData.sourceClassification.label}
                   </div>
@@ -875,6 +707,11 @@ const HealthAlerts: React.FC = () => {
                   <div className="text-xl font-semibold text-indigo-600">
                     {liveData.sourceClassification.confidence.toFixed(1)}%
                   </div>
+                  {liveData.sourceClassification.confidence < 60 && (
+                    <div className="mt-1 text-xs text-orange-600">
+                      Low confidence – pattern is ambiguous, treat as hypothesis only.
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -939,11 +776,32 @@ const HealthAlerts: React.FC = () => {
             <p className="text-gray-700 leading-relaxed">
               {currentLocation.pollutantInfo}
             </p>
+
+            {/* AQI bar inside Environmental Analysis */}
+            <div className="mt-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-gray-700">
+                  AQI level
+                </span>
+                <span className="text-sm font-semibold text-gray-800">
+                  {currentLocation.aqi}
+                </span>
+              </div>
+              <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+                <div
+                  className="h-3 rounded-full bg-gradient-to-r from-green-400 via-yellow-400 to-red-500 transition-all duration-500"
+                  style={{
+                    width: `${Math.min(100, (currentLocation.aqi / 300) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+
             {currentLocation.isLive && (
               <div className="mt-3 pt-3 border-t border-blue-200">
                 <div className="text-sm text-blue-700 font-medium flex items-center justify-between">
                   <span>
-                    ⚡ Live sensor data updated every 30 seconds for responsive
+                    ⚡ Live sensor data updated every 5 seconds for responsive
                     health monitoring
                   </span>
                   {isOnline && (
@@ -954,6 +812,130 @@ const HealthAlerts: React.FC = () => {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      </div>
+
+      {/* Health + Activity Panels */}
+      <div className="max-w-6xl mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Health Status */}
+          <div
+            className={`bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-gray-200 hover:shadow-xl transition-all duration-300 ${
+              currentLocation.isLive ? 'animate-pulse' : ''
+            }`}
+          >
+            <div className="flex items-center mb-6">
+              <div
+                className={`w-12 h-12 rounded-xl flex items-center justify-center bg-gradient-to-r ${currentLocation.gradient}`}
+              >
+                <Shield className="h-6 w-6 text-white" />
+              </div>
+              <h3 className="text-xl font-semibold text-gray-800 ml-4">
+                Health Status {currentLocation.isLive && '🔴'}
+              </h3>
+            </div>
+
+            <div className="space-y-4">
+              {currentLocation.recommendations.map((recommendation, index) => (
+                <div
+                  key={index}
+                  className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg"
+                >
+                  <div
+                    className={`w-2 h-2 rounded-full mt-2 ${
+                      currentLocation.riskLevel === 'safe'
+                        ? 'bg-green-400'
+                        : currentLocation.riskLevel === 'moderate'
+                        ? 'bg-orange-400'
+                        : currentLocation.riskLevel === 'high'
+                        ? 'bg-red-400'
+                        : currentLocation.riskLevel === 'very_unhealthy'
+                        ? 'bg-red-500'
+                        : 'bg-purple-500'
+                    }`}
+                  ></div>
+                  <p className="text-gray-700 text-sm leading-relaxed">
+                    {recommendation}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-gray-200">
+              <div className="text-xs text-gray-500 mb-1">Medical Basis:</div>
+              <div className="text-sm text-gray-600">
+                {currentLocation.medicalBasis}
+              </div>
+              {currentLocation.isLive && (
+                <div className="text-xs text-green-600 mt-2 font-medium flex items-center">
+                  ⚡ Real-time updates every 5 seconds
+                  {isOnline && (
+                    <span className="ml-2 font-mono text-gray-500">
+                      ({secondsUntilNext}s)
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Activity Recommendations */}
+          <div
+            className={`bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-gray-200 hover:shadow-xl transition-all duration-300 ${
+              currentLocation.isLive ? 'animate-pulse' : ''
+            }`}
+          >
+            <div className="flex items-center mb-6">
+              <div
+                className={`w-12 h-12 rounded-xl flex items-center justify-center bg-gradient-to-r ${currentLocation.gradient}`}
+              >
+                <Activity className="h-6 w-6 text-white" />
+              </div>
+              <h3 className="text-xl font-semibold text-gray-800 ml-4">
+                Activity Recommendations {currentLocation.isLive && '🔴'}
+              </h3>
+            </div>
+
+            <div className="space-y-4">
+              <div className="p-4 bg-gradient-to-r from-gray-50 to-orange-50 rounded-lg">
+                <h4 className="font-semibold text-gray-800 mb-2">
+                  Recommended Activities
+                </h4>
+                <p className="text-gray-700 text-sm leading-relaxed">
+                  {currentLocation.activityAdvice}
+                </p>
+              </div>
+
+              <div className="p-4 bg-blue-50 rounded-lg">
+                <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
+                  <Clock className="h-4 w-4 mr-2" />
+                  {currentLocation.isLive ? 'Live Status' : 'Optimal Times'}
+                </h4>
+                <p className="text-gray-700 text-sm leading-relaxed">
+                  {currentLocation.bestTimes}
+                </p>
+              </div>
+
+              <div className="p-3 bg-gray-50 rounded-lg">
+                <div className="text-xs text-gray-500 mb-1">
+                  Update Frequency:
+                </div>
+                <div className="text-sm font-medium text-gray-700 flex items-center justify-between">
+                  <span>
+                    Every 5 seconds
+                    {currentLocation.riskLevel === 'hazardous' &&
+                      ' (Emergency Protocol)'}
+                    {currentLocation.isLive && ' 📡 Live monitoring active'}
+                  </span>
+                  {currentLocation.isLive && isOnline && (
+                    <span className="font-mono text-xs text-green-600">
+                      {secondsUntilNext}s
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1063,7 +1045,7 @@ const HealthAlerts: React.FC = () => {
                   ? `VERY UNHEALTHY conditions at ${currentLocation.name}. Stay indoors and avoid all outdoor activities.`
                   : `HAZARDOUS conditions at ${currentLocation.name}. EVACUATE if possible and seek immediate shelter.`}
                 {currentLocation.isLive &&
-                  ' 🔴 Live monitoring with 30-second updates for rapid response.'}
+                  ' Live monitoring with 5-second updates for rapid response.'}
               </p>
             </div>
           </div>

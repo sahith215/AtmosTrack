@@ -402,7 +402,7 @@ const MapView: React.FC = () => {
                 isOnline ? 'bg-green-500' : 'bg-red-500'
               } animate-pulse`}
             ></div>
-            <span>LIET Monitor: {isOnline ? 'Online' : 'Offline'}</span>
+            <span>Monitor: {isOnline ? 'Online' : 'Offline'}</span>
           </div>
         </div>
 
