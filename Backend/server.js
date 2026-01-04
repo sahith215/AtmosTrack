@@ -1,5 +1,5 @@
-import 'dotenv/config';              // load .env
-import { connectDB } from './db.js'; // MongoDB connection
+import 'dotenv/config';
+import { connectDB } from './db.js';
 
 import express from 'express';
 import cors from 'cors';
@@ -10,12 +10,11 @@ import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { Reading } from './models/Reading.js';
 
-connectDB(); // connect to Atlas
+connectDB();
 
 const app = express();
 const server = http.createServer(app);
 
-// ✅ CORS for Vite (port 5173)
 const io = new SocketIO(server, {
   cors: {
     origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
@@ -24,7 +23,6 @@ const io = new SocketIO(server, {
   },
 });
 
-// ✅ CORS middleware
 app.use(
   cors({
     origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
@@ -35,22 +33,19 @@ app.use(
 
 app.use(express.json());
 
-// Store sensor data in memory
 let latestSensorData = null;
 let sensorHistory = [];
 
-// 🔹 AI feature window (rolling last N readings)
-const WINDOW_SIZE = 12; // ~60s if ESP32 sends every 5s
+const WINDOW_SIZE = 12;
 let aiWindow = [];
 
-// 🔹 CreditBatch schema (inline for now)
 const creditBatchSchema = new mongoose.Schema({
   batchId: { type: String, unique: true },
   deviceId: { type: String, required: true },
   fromTs: { type: Date, required: true },
   toTs: { type: Date, required: true },
-  date: { type: String, required: true }, // e.g. '2026-01-02'
-  dhiHours: { type: Number, required: true }, // Device‑Hours of Impact
+  date: { type: String, required: true },
+  dhiHours: { type: Number, required: true },
   tokens: { type: Number, required: true },
   aqiThreshold: { type: Number, default: 150 },
   status: { type: String, enum: ['PENDING', 'MINTED'], default: 'PENDING' },
@@ -61,7 +56,6 @@ const CreditBatch =
   mongoose.models.CreditBatch ||
   mongoose.model('CreditBatch', creditBatchSchema);
 
-// 🔹 Helper to make model output coherent with health conditions
 function adjustSourceClassification(sensorReading, modelResult) {
   if (!modelResult || !sensorReading.co2 || !sensorReading.aiFeatures) {
     return modelResult;
@@ -86,7 +80,6 @@ function adjustSourceClassification(sensorReading, modelResult) {
   return modelResult;
 }
 
-// API Routes
 app.get('/', (req, res) => {
   res.json({
     message: '🌍 AtmosTrack Multi-Sensor Backend Running!',
@@ -99,12 +92,11 @@ app.get('/', (req, res) => {
       exportReadings: '/api/exports/readings',
       exportReadingsCsv: '/api/exports/readings/csv',
       creditBatch: '/api/carbon/credit-batch',
-      setLocationFromPhone: '/api/nodes/set-location', // ✅ added
+      setLocationFromPhone: '/api/nodes/set-location',
     },
   });
 });
 
-// small helper: build export filter from query
 function buildExportFilter(query) {
   const { from, to, deviceId, context = 'all' } = query;
 
@@ -136,7 +128,6 @@ function buildExportFilter(query) {
   return { filter };
 }
 
-// 🔹 Export filter endpoint (JSON preview)
 app.get('/api/exports/readings', async (req, res) => {
   try {
     const { filter, error } = buildExportFilter(req.query);
@@ -170,7 +161,6 @@ app.get('/api/exports/readings', async (req, res) => {
   }
 });
 
-// 🔹 CSV export endpoint (wide CSV with all useful fields)
 app.get('/api/exports/readings/csv', async (req, res) => {
   try {
     const { filter, error } = buildExportFilter(req.query);
@@ -314,7 +304,6 @@ app.get('/api/exports/readings/csv', async (req, res) => {
   }
 });
 
-// simple helper for now: rough AQI + emissions estimate
 function estimateAQIFromMQ135(raw) {
   if (raw == null) return 75;
   return Math.max(0, Math.min(500, Math.round((raw / 4095) * 300)));
@@ -325,7 +314,6 @@ function estimateEmissionsKgFromCO2ppm(ppm) {
   return Number((ppm / 1_000_000_000).toFixed(8));
 }
 
-// 🔧 ESP32 sends full sensor suite here
 app.post('/api/sensor-data', async (req, res) => {
   const {
     deviceId = 'ATMOSTRACK-01',
@@ -350,7 +338,6 @@ app.post('/api/sensor-data', async (req, res) => {
 
   const timestamp = new Date();
 
-  // ✅ NEW: preserve phone-set lat/lng if already present in latestSensorData for this device
   const preservedLat =
     latestSensorData &&
     latestSensorData.deviceId === deviceId &&
@@ -395,7 +382,7 @@ app.post('/api/sensor-data', async (req, res) => {
       speed: preservedSpeed,
     },
     purification: {
-      on: true, // force ON whenever the device is sending data
+      on: true,
     },
     co2: processedCO2,
     mq135: {
@@ -405,7 +392,6 @@ app.post('/api/sensor-data', async (req, res) => {
     timestamp: timestamp.toISOString(),
   };
 
-  // 🔹 Maintain rolling window for AI
   aiWindow.push(sensorReading);
   if (aiWindow.length > WINDOW_SIZE) {
     aiWindow = aiWindow.slice(-WINDOW_SIZE);
@@ -536,7 +522,6 @@ app.post('/api/sensor-data', async (req, res) => {
       `PUR=${sensorReading.purification.on ? 'ON' : 'OFF'}`
   );
 
-  // ------- Reading document for MongoDB -------
   try {
     const aqi = estimateAQIFromMQ135(sensorReading.mq135.raw);
     const co2ppm = processedCO2 ? processedCO2.ppm : 0;
@@ -563,7 +548,7 @@ app.post('/api/sensor-data', async (req, res) => {
         mq135Volt: sensorReading.mq135.volt,
       },
       purification: {
-        on: true, // always ON when device is running
+        on: true,
       },
       aiFeatures: {
         vocAvg: VOC_avg,
@@ -597,12 +582,10 @@ app.post('/api/sensor-data', async (req, res) => {
   } catch (err) {
     console.error('Error saving Reading to MongoDB:', err.message);
   }
-  // -------------------------------------------------------
 
   res.json({ success: true, data: sensorReading });
 });
 
-// 🔹 Phone-based location setter (NEW, uses same structure & helpers)
 app.post('/api/nodes/set-location', async (req, res) => {
   try {
     const { deviceId, lat, lng, timestamp } = req.body;
@@ -615,18 +598,15 @@ app.post('/api/nodes/set-location', async (req, res) => {
 
     const ts = timestamp ? new Date(timestamp) : new Date();
 
-    // 1) Update in-memory latestSensorData so dashboard/map react instantly
     if (latestSensorData && latestSensorData.deviceId === deviceId) {
       latestSensorData.location = {
         lat,
         lng,
         speed: latestSensorData.location?.speed ?? null,
       };
-      latestSensorData.timestamp = ts.toISOString();
       io.emit('sensorUpdate', latestSensorData);
     }
 
-    // 2) Update recent history copy (optional)
     sensorHistory = sensorHistory.map((r) =>
       r.deviceId === deviceId
         ? {
@@ -640,7 +620,6 @@ app.post('/api/nodes/set-location', async (req, res) => {
         : r
     );
 
-    // 3) Update Mongo Reading documents for this device for “today”
     const dayStart = new Date(ts);
     dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date(ts);
@@ -666,7 +645,6 @@ app.post('/api/nodes/set-location', async (req, res) => {
   }
 });
 
-// Frontend gets latest data
 app.get('/api/latest', (req, res) => {
   res.json({
     success: true,
@@ -677,7 +655,6 @@ app.get('/api/latest', (req, res) => {
   });
 });
 
-// Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
@@ -690,7 +667,6 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// 🔹 Helper: compute DHI + tokens for a day
 async function computeDHIForDay({ deviceId, date }) {
   const fromTs = new Date(date + 'T00:00:00.000Z');
   const toTs = new Date(date + 'T23:59:59.999Z');
@@ -698,7 +674,7 @@ async function computeDHIForDay({ deviceId, date }) {
   const readings = await Reading.find({
     deviceId,
     timestamp: { $gte: fromTs, $lte: toTs },
-    'purification.on': true, // only purifier-on required now
+    'purification.on': true,
   })
     .sort({ timestamp: 1 })
     .lean();
@@ -719,7 +695,7 @@ async function computeDHIForDay({ deviceId, date }) {
   }
 
   const dhiHours = minutes / 60;
-  const tokens = dhiHours / 10; // 10 DHI = 1 token
+  const tokens = dhiHours / 10;
 
   const batchId = crypto
     .createHash('sha256')
@@ -746,7 +722,6 @@ async function computeDHIForDay({ deviceId, date }) {
   return batch;
 }
 
-// 🔹 API: create credit batch for a day
 app.post('/api/carbon/credit-batch', async (req, res) => {
   try {
     const { deviceId = 'ATMOSTRACK-01', date } = req.body;
@@ -775,7 +750,6 @@ app.post('/api/carbon/credit-batch', async (req, res) => {
   }
 });
 
-// WebSocket connection logging
 io.on('connection', (socket) => {
   console.log('🔌 Frontend connected from:', socket.handshake.address);
 
@@ -789,7 +763,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// CO2 Helper Functions (for MG811)
 function getCO2Status(ppm) {
   if (ppm < 400) return 'OUTDOOR_FRESH';
   if (ppm < 1000) return 'GOOD';
@@ -806,7 +779,6 @@ function getCO2HealthAdvice(ppm) {
   return 'Dangerous levels - evacuate immediately';
 }
 
-// Server listen (ESP32 needs 0.0.0.0)
 const PORT = 5000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 AtmosTrack Multi-Sensor Backend running on http://0.0.0.0:${PORT}`);

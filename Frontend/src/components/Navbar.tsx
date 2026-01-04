@@ -14,7 +14,8 @@ const Navbar: React.FC<NavbarProps> = ({ activeView, setActiveView }) => {
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'map', label: 'Map View' },
     { id: 'health', label: 'Health Alerts' },
-    { id: 'export', label: 'Data Export' },
+    { id: 'carbon', label: 'Carbon Hub' },
+    { id: 'export', label: 'Data Export' },          // 👈 new tab
   ];
 
   const handleNavClick = (viewId: string) => {
@@ -27,7 +28,10 @@ const Navbar: React.FC<NavbarProps> = ({ activeView, setActiveView }) => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
-          <div className="flex items-center space-x-3 cursor-pointer" onClick={() => handleNavClick('home')}>
+          <div
+            className="flex items-center space-x-3 cursor-pointer"
+            onClick={() => handleNavClick('home')}
+          >
             <div className="w-10 h-10 bg-gradient-to-br from-orange-400 to-orange-500 rounded-xl flex items-center justify-center shadow-lg transform hover:scale-105 transition-all duration-200">
               <Wind className="h-5 w-5 text-white" />
             </div>
@@ -42,9 +46,10 @@ const Navbar: React.FC<NavbarProps> = ({ activeView, setActiveView }) => {
                 onClick={() => handleNavClick(item.id)}
                 className={`
                   px-4 py-2 rounded-lg font-medium transition-all duration-200 transform hover:scale-105
-                  ${activeView === item.id
-                    ? 'bg-orange-100 text-orange-700 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-800 hover:bg-cream-100'
+                  ${
+                    activeView === item.id
+                      ? 'bg-orange-100 text-orange-700 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-800 hover:bg-cream-100'
                   }
                 `}
               >
@@ -59,11 +64,7 @@ const Navbar: React.FC<NavbarProps> = ({ activeView, setActiveView }) => {
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className="p-2 rounded-lg text-gray-600 hover:text-gray-800 hover:bg-cream-100 transition-colors duration-200"
             >
-              {mobileMenuOpen ? (
-                <X className="h-6 w-6" />
-              ) : (
-                <Menu className="h-6 w-6" />
-              )}
+              {mobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
             </button>
           </div>
         </div>
@@ -78,9 +79,10 @@ const Navbar: React.FC<NavbarProps> = ({ activeView, setActiveView }) => {
                   onClick={() => handleNavClick(item.id)}
                   className={`
                     block w-full text-left px-3 py-2 rounded-lg font-medium transition-all duration-200
-                    ${activeView === item.id
-                      ? 'bg-orange-100 text-orange-700'
-                      : 'text-gray-600 hover:text-gray-800 hover:bg-cream-100'
+                    ${
+                      activeView === item.id
+                        ? 'bg-orange-100 text-orange-700'
+                        : 'text-gray-600 hover:text-gray-800 hover:bg-cream-100'
                     }
                   `}
                 >

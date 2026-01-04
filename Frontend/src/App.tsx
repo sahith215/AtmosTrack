@@ -2,14 +2,15 @@ import { useState } from 'react';
 import Navbar from './components/Navbar';
 import Home from './components/Home';
 import Dashboard from './components/Dashboard';
-import MapView from './components/MapView';
 import HealthAlerts from './components/HealthAlerts';
 import DataExport from './components/DataExport';
+import MapView from './components/MapView';
 import Toast from './components/Toast';
 import { ToastProvider } from './contexts/ToastContext';
+import CarbonDashboard from './components/CarbonDashboard';
 
 function App() {
-  const [activeView, setActiveView] = useState('home');
+  const [activeView, setActiveView] = useState<'home' | 'dashboard' | 'map' | 'health' | 'export' | 'carbon'>('home');
 
   const renderView = () => {
     switch (activeView) {
@@ -23,6 +24,8 @@ function App() {
         return <HealthAlerts />;
       case 'export':
         return <DataExport />;
+      case 'carbon':
+        return <CarbonDashboard />;
       default:
         return <Home setActiveView={setActiveView} />;
     }
