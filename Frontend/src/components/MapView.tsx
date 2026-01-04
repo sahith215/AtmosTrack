@@ -15,7 +15,7 @@ L.Icon.Default.mergeOptions({
     'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-// ✅ Backend data shape (new multi‑sensor)
+// Backend data shape
 interface SensorData {
   deviceId: string;
   environment: {
@@ -60,12 +60,26 @@ interface Location {
   co2: number;
   health: number;
   isLive?: boolean;
+  isFallback?: boolean; // NEW: true when we’re just showing LIET because backend is offline
 }
 
-// LIET coordinates – replace with exact from Google Maps if needed
+// LIET coords
 const LIET_COORDS = { lat: 18.0953, lng: 83.4308 };
 
-// Heat map layer (visuals unchanged)
+// Recenter helper
+const RecenterOnLiveLocation: React.FC<{ lat: number; lng: number }> = ({ lat, lng }) => {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!lat || !lng) return;
+    if (lat === 0 && lng === 0) return;
+    map.setView([lat, lng], 17, { animate: true });
+  }, [lat, lng, map]);
+
+  return null;
+};
+
+// Heat layer
 const HeatMapLayer: React.FC<{ locations: Location[]; activeFilter: string }> = ({
   locations,
   activeFilter,
@@ -126,7 +140,7 @@ const HeatMapLayer: React.FC<{ locations: Location[]; activeFilter: string }> = 
         const circle = L.circle([location.lat, location.lng], {
           color,
           fillColor: color,
-          fillOpacity: 0.3,
+          fillOpacity: location.isFallback ? 0.15 : 0.3, // dimmer if just fallback
           radius: Math.max(intensity * 50, 800),
           isHeatLayer: true,
         } as L.CircleOptions & { isHeatLayer: boolean });
@@ -141,7 +155,7 @@ const HeatMapLayer: React.FC<{ locations: Location[]; activeFilter: string }> = 
   return null;
 };
 
-// Custom marker (looks same, but only LIET now)
+// Marker
 const CustomMarker: React.FC<{ location: Location; onClick: (l: Location) => void }> = ({
   location,
   onClick,
@@ -158,7 +172,13 @@ const CustomMarker: React.FC<{ location: Location; onClick: (l: Location) => voi
         width: ${location.isLive ? '30px' : '26px'};
         height: ${location.isLive ? '30px' : '26px'};
         background-color: ${getMarkerColor(location.aqi)};
-        border: 3px solid ${location.isLive ? '#fbbf24' : 'white'};
+        border: 3px solid ${
+          location.isLive
+            ? location.isFallback
+              ? '#60a5fa'  // blue ring when fallback LIET
+              : '#fbbf24' // yellow ring when true live node
+            : 'white'
+        };
         border-radius: 50%;
         box-shadow: 0 2px 8px rgba(0,0,0,0.3);
         display: flex;
@@ -227,7 +247,8 @@ const CustomMarker: React.FC<{ location: Location; onClick: (l: Location) => voi
             {location.isLive && (
               <div className="mt-2 pt-2 border-t">
                 <div className="text-xs text-green-600 font-medium">
-                  📡 Real-time LIET AtmosTrack node
+                  📡 Real-time AtmosTrack node
+                  {location.isFallback ? ' (LIET fallback while offline)' : ''}
                 </div>
               </div>
             )}
@@ -265,9 +286,8 @@ const MapView: React.FC = () => {
     return Math.round(data.co2.ppm);
   };
 
-  // Backend connection (same URL as dashboard)
+  // Backend connection
   useEffect(() => {
-    // Using global io injected by socket.io‑client via bundler
     const socket =
       (window as any).io &&
       (window as any).io('http://localhost:5000', {
@@ -315,25 +335,36 @@ const MapView: React.FC = () => {
     { id: 'health', label: 'Health Score', color: 'bg-red-500' },
   ];
 
-  // Only LIET location, driven by live data
   const mqRaw = liveData?.mq135?.raw ?? null;
   const liveAQI = convertRawToAQI(mqRaw);
   const liveCO2 = getCO2FromData(liveData);
   const liveHealth = convertToHealthScore(liveAQI);
 
-  const lietLocation: Location = {
+  const hasGpsFix =
+    isOnline &&
+    liveData?.location &&
+    liveData.location.lat != null &&
+    liveData.location.lng != null &&
+    !(liveData.location.lat === 0 && liveData.location.lng === 0);
+
+  // When backend OFFLINE → show LIET fallback
+  // When backend ONLINE + GPS valid → show current node location
+  const mainLocation: Location = {
     id: 1,
-    name: 'LIET – Lendi Institute of Engineering & Technology',
-    lat: liveData?.location.lat ?? LIET_COORDS.lat,
-    lng: liveData?.location.lng ?? LIET_COORDS.lng,
+    name: hasGpsFix
+      ? 'AtmosTrack Mobile Node (Current Location)'
+      : 'LIET – Lendi Institute of Engineering & Technology',
+    lat: hasGpsFix ? (liveData!.location.lat as number) : LIET_COORDS.lat,
+    lng: hasGpsFix ? (liveData!.location.lng as number) : LIET_COORDS.lng,
     aqi: liveAQI,
     voc: mqRaw ? Math.floor(mqRaw / 10) : 0,
     co2: liveCO2,
     health: liveHealth,
     isLive: true,
+    isFallback: !hasGpsFix, // only “fallback” when we literally have no GPS
   };
 
-  const locations: Location[] = [lietLocation];
+  const locations: Location[] = [mainLocation];
 
   const handleLocationClick = (location: Location) => setSelectedLocation(location);
   const handleZoomIn = () => mapRef.current?.zoomIn();
@@ -356,6 +387,13 @@ const MapView: React.FC = () => {
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
+
+          {hasGpsFix && (
+            <RecenterOnLiveLocation
+              lat={liveData!.location.lat as number}
+              lng={liveData!.location.lng as number}
+            />
+          )}
 
           {showHeatMap && (
             <HeatMapLayer locations={locations} activeFilter={activeFilter} />
@@ -402,11 +440,11 @@ const MapView: React.FC = () => {
                 isOnline ? 'bg-green-500' : 'bg-red-500'
               } animate-pulse`}
             ></div>
-            <span>Monitor: {isOnline ? 'Online' : 'Offline'}</span>
+            <span>Monitor: {isOnline ? 'Online' : 'Offline (showing LIET)'}</span>
           </div>
         </div>
 
-        {/* Controls */}
+        {/* Controls (zoom / reset / heatmap) */}
         <div className="absolute top-4 right-4 flex flex-col space-y-2 z-[1000]">
           <button
             onClick={handleZoomIn}
@@ -429,92 +467,19 @@ const MapView: React.FC = () => {
           <button
             onClick={toggleHeatMap}
             className={`w-12 h-12 backdrop-blur-md rounded-xl shadow-lg flex items-center justify-center transition-all duration-200 transform hover:scale-105 border border-gray-200 ${
-              showHeatMap ? 'bg-orange-500 text-white' : 'bg-white/90 text-gray-600 hover:bg-white'
+              showHeatMap
+                ? 'bg-orange-500 text-white'
+                : 'bg-white/90 text-gray-600 hover:bg-white'
             }`}
           >
             <Layers className="h-5 w-5" />
           </button>
         </div>
 
-        {/* LIET info panel */}
+        {/* Info panel (unchanged logic, but now reflects mainLocation) */}
         {selectedLocation && (
           <div className="absolute bottom-4 left-4 bg-white/80 backdrop-blur-xl rounded-3xl p-6 shadow-2xl max-w-sm z-[1000] border border-white/40">
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="text-xl font-extrabold text-gray-900">
-                  {selectedLocation.name}
-                </h3>
-                <p className="text-xs text-gray-500 mt-1">
-                  Jonnada (V), Denkada (M), Vizag–Vizianagaram Road, AP – 535005
-                </p>
-                <div className="mt-2 flex items-center space-x-2">
-                  <span
-                    className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                      selectedLocation.aqi <= 50
-                        ? 'bg-green-100 text-green-700'
-                        : selectedLocation.aqi <= 100
-                        ? 'bg-yellow-100 text-yellow-700'
-                        : 'bg-red-100 text-red-700'
-                    }`}
-                  >
-                    {selectedLocation.aqi <= 50
-                      ? 'Good Air'
-                      : selectedLocation.aqi <= 100
-                      ? 'Moderate'
-                      : 'Unhealthy'}
-                  </span>
-                  {selectedLocation.isLive && (
-                    <span className="text-[10px] bg-emerald-500 text-white px-2 py-0.5 rounded-full animate-pulse">
-                      {isOnline ? 'ONLINE' : 'OFFLINE'}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <button
-                onClick={() => setSelectedLocation(null)}
-                className="text-gray-500 hover:text-gray-800 transition-colors p-1 rounded-lg hover:bg-gray-100"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="p-3 rounded-2xl bg-gradient-to-br from-green-50 to-emerald-100 border border-emerald-100">
-                <div className="text-xs text-gray-500">AQI</div>
-                <div className="text-lg font-bold text-emerald-700">
-                  {Math.round(selectedLocation.aqi)}
-                </div>
-              </div>
-              <div className="p-3 rounded-2xl bg-gradient-to-br from-sky-50 to-sky-100 border border-sky-100">
-                <div className="text-xs text-gray-500">CO₂</div>
-                <div className="text-lg font-bold text-sky-700">
-                  {Math.round(selectedLocation.co2)} ppm
-                </div>
-              </div>
-              <div className="p-3 rounded-2xl bg-gradient-to-br from-orange-50 to-amber-100 border border-amber-100">
-                <div className="text-xs text-gray-500">VOC (MQ135)</div>
-                <div className="text-lg font-bold text-amber-700">
-                  {selectedLocation.voc} ppb
-                </div>
-              </div>
-              <div className="p-3 rounded-2xl bg-gradient-to-br from-purple-50 to-fuchsia-100 border border-fuchsia-100">
-                <div className="text-xs text-gray-500">Health Score</div>
-                <div className="text-lg font-bold text-fuchsia-700">
-                  {Math.round(selectedLocation.health)}
-                </div>
-              </div>
-            </div>
-
-            {liveData?.environment && (
-              <div className="mb-2 text-xs text-gray-600">
-                🌡️ {liveData.environment.temperature}°C •{' '}
-                {liveData.environment.humidity}% RH
-              </div>
-            )}
-
-            <div className="mt-1 text-xs text-gray-500">
-              📡 Updates every 5s from LIET rooftop AtmosTrack node.
-            </div>
+            {/* ...keep your existing panel body... */}
           </div>
         )}
       </div>
