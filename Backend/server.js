@@ -39,6 +39,7 @@ let sensorHistory = [];
 const WINDOW_SIZE = 12;
 let aiWindow = [];
 
+// ------------ CreditBatch model ------------
 const creditBatchSchema = new mongoose.Schema({
   batchId: { type: String, unique: true },
   deviceId: { type: String, required: true },
@@ -49,6 +50,7 @@ const creditBatchSchema = new mongoose.Schema({
   tokens: { type: Number, required: true },
   aqiThreshold: { type: Number, default: 150 },
   status: { type: String, enum: ['PENDING', 'MINTED'], default: 'PENDING' },
+  txHash: { type: String }, // NEW
   createdAt: { type: Date, default: Date.now },
 });
 
@@ -56,6 +58,7 @@ const CreditBatch =
   mongoose.models.CreditBatch ||
   mongoose.model('CreditBatch', creditBatchSchema);
 
+// ------------ Helpers ------------
 function adjustSourceClassification(sensorReading, modelResult) {
   if (!modelResult || !sensorReading.co2 || !sensorReading.aiFeatures) {
     return modelResult;
@@ -80,6 +83,7 @@ function adjustSourceClassification(sensorReading, modelResult) {
   return modelResult;
 }
 
+// ------------ Root ------------
 app.get('/', (req, res) => {
   res.json({
     message: '🌍 AtmosTrack Multi-Sensor Backend Running!',
@@ -92,11 +96,13 @@ app.get('/', (req, res) => {
       exportReadings: '/api/exports/readings',
       exportReadingsCsv: '/api/exports/readings/csv',
       creditBatch: '/api/carbon/credit-batch',
+      listBatches: '/api/carbon/batches',
       setLocationFromPhone: '/api/nodes/set-location',
     },
   });
 });
 
+// ------------ Export helpers ------------
 function buildExportFilter(query) {
   const { from, to, deviceId, context = 'all' } = query;
 
@@ -128,6 +134,7 @@ function buildExportFilter(query) {
   return { filter };
 }
 
+// ------------ Export endpoints ------------
 app.get('/api/exports/readings', async (req, res) => {
   try {
     const { filter, error } = buildExportFilter(req.query);
@@ -168,14 +175,12 @@ app.get('/api/exports/readings/csv', async (req, res) => {
       return res.status(400).send(error);
     }
 
-    const cursor = Reading.find(filter)
-      .sort({ timestamp: 1 })
-      .cursor();
+    const cursor = Reading.find(filter).sort({ timestamp: 1 }).cursor();
 
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader(
       'Content-Disposition',
-      'attachment; filename="atmostrack-readings.csv"'
+      'attachment; filename="atmostrack-readings.csv"',
     );
 
     const header =
@@ -304,6 +309,7 @@ app.get('/api/exports/readings/csv', async (req, res) => {
   }
 });
 
+// ------------ AQI / emissions helpers ------------
 function estimateAQIFromMQ135(raw) {
   if (raw == null) return 75;
   return Math.max(0, Math.min(500, Math.round((raw / 4095) * 300)));
@@ -314,6 +320,7 @@ function estimateEmissionsKgFromCO2ppm(ppm) {
   return Number((ppm / 1_000_000_000).toFixed(8));
 }
 
+// ------------ Sensor ingest ------------
 app.post('/api/sensor-data', async (req, res) => {
   const {
     deviceId = 'ATMOSTRACK-01',
@@ -435,7 +442,7 @@ app.post('/api/sensor-data', async (req, res) => {
     .map((r) =>
       r.imu && r.imu.ax !== null && r.imu.ay !== null && r.imu.az !== null
         ? (Math.abs(r.imu.ax) + Math.abs(r.imu.ay) + Math.abs(r.imu.az)) / 3
-        : null
+        : null,
     )
     .filter((v) => v !== null);
 
@@ -519,7 +526,7 @@ app.post('/api/sensor-data', async (req, res) => {
       `H=${sensorReading.environment.humidity}%${co2Message}${mqMessage}${imuMessage} | ` +
       `GPS=(${sensorReading.location.lat},${sensorReading.location.lng}) ` +
       `v=${sensorReading.location.speed}km/h | ` +
-      `PUR=${sensorReading.purification.on ? 'ON' : 'OFF'}`
+      `PUR=${sensorReading.purification.on ? 'ON' : 'OFF'}`,
   );
 
   try {
@@ -579,6 +586,7 @@ app.post('/api/sensor-data', async (req, res) => {
     };
 
     await Reading.create(readingDoc);
+    console.log('SAVED READING', { deviceId, timestamp });
   } catch (err) {
     console.error('Error saving Reading to MongoDB:', err.message);
   }
@@ -586,6 +594,7 @@ app.post('/api/sensor-data', async (req, res) => {
   res.json({ success: true, data: sensorReading });
 });
 
+// ------------ Phone-based location correction ------------
 app.post('/api/nodes/set-location', async (req, res) => {
   try {
     const { deviceId, lat, lng, timestamp } = req.body;
@@ -617,7 +626,7 @@ app.post('/api/nodes/set-location', async (req, res) => {
               speed: r.location?.speed ?? null,
             },
           }
-        : r
+        : r,
     );
 
     const dayStart = new Date(ts);
@@ -635,7 +644,7 @@ app.post('/api/nodes/set-location', async (req, res) => {
           'location.lat': lat,
           'location.lng': lng,
         },
-      }
+      },
     );
 
     return res.json({ success: true });
@@ -645,6 +654,7 @@ app.post('/api/nodes/set-location', async (req, res) => {
   }
 });
 
+// ------------ Latest + health ------------
 app.get('/api/latest', (req, res) => {
   res.json({
     success: true,
@@ -667,35 +677,46 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// ------------ DHI + batches ------------
 async function computeDHIForDay({ deviceId, date }) {
   const fromTs = new Date(date + 'T00:00:00.000Z');
   const toTs = new Date(date + 'T23:59:59.999Z');
 
+  const SAMPLE_INTERVAL_SECONDS = 30;
+  const TOKENS_PER_DHI_HOUR = 0.1;
+
   const readings = await Reading.find({
-    deviceId,
     timestamp: { $gte: fromTs, $lte: toTs },
-    'purification.on': true,
   })
     .sort({ timestamp: 1 })
     .lean();
+
+  console.log('DHI DEBUG', {
+    deviceId,
+    date,
+    fromTs,
+    toTs,
+    count: readings.length,
+    first: readings[0]?.timestamp,
+    last: readings[readings.length - 1]?.timestamp,
+  });
 
   if (!readings.length) {
     return null;
   }
 
-  let minutes = 0;
-  if (readings.length > 1) {
-    const dtMs =
-      new Date(readings[1].timestamp).getTime() -
-      new Date(readings[0].timestamp).getTime();
-    const intervalMinutes = dtMs > 0 ? dtMs / 60000 : 1;
-    minutes = readings.length * intervalMinutes;
-  } else {
-    minutes = 1;
-  }
+  const count = readings.length;
+  const hoursByCadence = (count * SAMPLE_INTERVAL_SECONDS) / 3600;
 
-  const dhiHours = minutes / 60;
-  const tokens = dhiHours / 10;
+  const firstTs = new Date(readings[0].timestamp).getTime();
+  const lastTs = new Date(readings[readings.length - 1].timestamp).getTime();
+  const spanHours = (lastTs - firstTs) / (1000 * 60 * 60);
+
+  const dhiHours = Math.min(
+    hoursByCadence,
+    Math.max(spanHours, 0.0167),
+  );
+  const tokens = Number((dhiHours * TOKENS_PER_DHI_HOUR).toFixed(4));
 
   const batchId = crypto
     .createHash('sha256')
@@ -716,12 +737,13 @@ async function computeDHIForDay({ deviceId, date }) {
       aqiThreshold: 0,
       status: 'PENDING',
     },
-    { upsert: true, new: true }
+    { upsert: true, new: true },
   );
 
   return batch;
 }
 
+// POST: compute one batch for a day
 app.post('/api/carbon/credit-batch', async (req, res) => {
   try {
     const { deviceId = 'ATMOSTRACK-01', date } = req.body;
@@ -750,6 +772,73 @@ app.post('/api/carbon/credit-batch', async (req, res) => {
   }
 });
 
+// NEW: simulate on-chain mint
+app.post('/api/carbon/mint-onchain', async (req, res) => {
+  try {
+    const { batchId, walletAddress } = req.body;
+
+    if (!batchId || !walletAddress) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'batchId and walletAddress required' });
+    }
+
+    const batch = await CreditBatch.findOne({ batchId });
+
+    if (!batch) {
+      return res
+        .status(404)
+        .json({ ok: false, error: 'Batch not found' });
+    }
+
+    if (batch.status === 'MINTED') {
+      return res.json({
+        ok: true,
+        alreadyMinted: true,
+        batch,
+      });
+    }
+
+    const fakeTxHash = 'SIMULATED_POLYGON_TX_' + batchId.slice(0, 8);
+
+    batch.status = 'MINTED';
+    batch.txHash = fakeTxHash;
+    await batch.save();
+
+    return res.json({
+      ok: true,
+      simulated: true,
+      batch,
+      txHash: fakeTxHash,
+    });
+  } catch (err) {
+    console.error('Error in /api/carbon/mint-onchain:', err);
+    return res
+      .status(500)
+      .json({ ok: false, error: 'Mint-onchain server error' });
+  }
+});
+
+// NEW: GET list of batches
+app.get('/api/carbon/batches', async (req, res) => {
+  try {
+    const { deviceId } = req.query;
+    const filter = deviceId ? { deviceId: String(deviceId) } : {};
+    const batches = await CreditBatch.find(filter)
+      .sort({ date: -1, createdAt: -1 })
+      .limit(50)
+      .lean();
+
+    return res.json({ ok: true, batches });
+  } catch (err) {
+    console.error('Error in /api/carbon/batches:', err);
+    return res
+      .status(500)
+      .json({ ok: false, error: 'Batch list error' });
+  }
+});
+
+// ------------ WebSocket ------------
 io.on('connection', (socket) => {
   console.log('🔌 Frontend connected from:', socket.handshake.address);
 
@@ -763,6 +852,7 @@ io.on('connection', (socket) => {
   });
 });
 
+// ------------ CO2 helpers ------------
 function getCO2Status(ppm) {
   if (ppm < 400) return 'OUTDOOR_FRESH';
   if (ppm < 1000) return 'GOOD';
@@ -779,6 +869,7 @@ function getCO2HealthAdvice(ppm) {
   return 'Dangerous levels - evacuate immediately';
 }
 
+// ------------ Server listen ------------
 const PORT = 5000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 AtmosTrack Multi-Sensor Backend running on http://0.0.0.0:${PORT}`);
@@ -788,9 +879,11 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('📊 API Endpoints:');
   console.log('   POST /api/sensor-data - ESP32 data input');
   console.log('   POST /api/nodes/set-location - Phone location input');
-  console.log('   GET  /api/latest       - Latest readings');
-  console.log('   GET  /api/health       - System health');
+  console.log('   GET  /api/latest        - Latest readings');
+  console.log('   GET  /api/health        - System health');
   console.log('   GET  /api/exports/readings - Export filter endpoint v1');
   console.log('   GET  /api/exports/readings/csv - CSV export endpoint');
   console.log('   POST /api/carbon/credit-batch - Compute DHI + tokens for a day');
+  console.log('   POST /api/carbon/mint-onchain - Simulate on-chain mint for a batch');
+  console.log('   GET  /api/carbon/batches      - List recent credit batches');
 });

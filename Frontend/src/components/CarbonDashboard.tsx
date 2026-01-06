@@ -15,6 +15,7 @@ type Batch = {
   dhiHours: number;
   tokens: number;
   status: 'PENDING' | 'MINTED';
+  txHash?: string;
 };
 
 type OffsetPlan = {
@@ -26,13 +27,22 @@ type OffsetPlan = {
 
 const API_BASE = 'http://localhost:5000';
 
+// helper: always return today in local time as YYYY-MM-DD
+const todayISO = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const CarbonDashboard: React.FC = () => {
   const [wallet, setWallet] = useState<WalletState>({ address: null, chainId: null });
   const [batches, setBatches] = useState<Batch[]>([]);
   const [loadingBatches, setLoadingBatches] = useState(false);
   const [offsetPlan, setOffsetPlan] = useState<OffsetPlan>({
     deviceId: 'ATMOSTRACK-01',
-    date: new Date().toISOString().slice(0, 10),
+    date: todayISO(),
     emissionsTonnes: 1,
     offsetPercent: 100,
   });
@@ -58,12 +68,15 @@ const CarbonDashboard: React.FC = () => {
     }
   };
 
-  // BATCHES
+  // BATCHES: load from backend
   const fetchBatches = async () => {
     setLoadingBatches(true);
     try {
-      // TODO: replace with real list endpoint when you add it
-      console.log('fetchBatches: add GET /api/carbon/batches later');
+      const res = await axios.get(`${API_BASE}/api/carbon/batches`, {
+        params: { deviceId: offsetPlan.deviceId },
+      });
+      const list = res.data?.batches ?? [];
+      setBatches(list);
     } catch (err) {
       console.error('fetchBatches error:', err);
     } finally {
@@ -73,6 +86,7 @@ const CarbonDashboard: React.FC = () => {
 
   useEffect(() => {
     fetchBatches();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // CREATE BATCH
@@ -80,14 +94,58 @@ const CarbonDashboard: React.FC = () => {
     try {
       const res = await axios.post(`${API_BASE}/api/carbon/credit-batch`, {
         deviceId: offsetPlan.deviceId,
-        date: offsetPlan.date,
+        date: offsetPlan.date, // always YYYY-MM-DD
       });
-      console.log(res.data);
-      setTxStatus('Computed DHI and tokens for that day.');
-      fetchBatches();
+
+      if (res.data?.batch) {
+        const newBatch: Batch = res.data.batch;
+        setBatches((prev) => {
+          const withoutDup = prev.filter((b) => b.batchId !== newBatch.batchId);
+          return [newBatch, ...withoutDup];
+        });
+        setTxStatus('Computed DHI and tokens for that day.');
+      } else if (res.data?.message) {
+        setTxStatus(res.data.message);
+      } else {
+        setTxStatus('No batch created for this day.');
+      }
     } catch (err) {
       console.error('createDailyBatch error:', err);
       setTxStatus('Failed to compute DHI.');
+    }
+  };
+
+  // MINT BATCH (calls backend mint-onchain)
+  const mintBatch = async (batch: Batch) => {
+    if (!wallet.address) {
+      alert('Connect wallet first.');
+      return;
+    }
+
+    try {
+      const res = await axios.post(`${API_BASE}/api/carbon/mint-onchain`, {
+        batchId: batch.batchId,
+        walletAddress: wallet.address,
+      });
+
+      const updated: Batch | undefined = res.data?.batch;
+      if (updated) {
+        setBatches((prev) =>
+          prev.map((b) => (b.batchId === updated.batchId ? updated : b)),
+        );
+        setTxStatus(
+          `Simulated mint for batch ${updated.date} → status ${updated.status}${
+            updated.txHash ? ` (tx: ${updated.txHash})` : ''
+          }`,
+        );
+      } else if (res.data?.alreadyMinted) {
+        setTxStatus(`Batch ${batch.date} is already minted.`);
+      } else {
+        setTxStatus('Mint response did not include a batch.');
+      }
+    } catch (err) {
+      console.error('mintBatch error:', err);
+      setTxStatus('Mint failed – check server logs.');
     }
   };
 
@@ -304,6 +362,9 @@ const CarbonDashboard: React.FC = () => {
                       <th className="text-left py-2 px-3 font-medium text-gray-600">
                         Status
                       </th>
+                      <th className="text-left py-2 px-3 font-medium text-gray-600">
+                        Action
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -327,6 +388,24 @@ const CarbonDashboard: React.FC = () => {
                           >
                             {b.status}
                           </span>
+                          {b.txHash && (
+                            <div className="mt-1 text-[10px] text-gray-400">
+                              tx: {b.txHash.slice(0, 10)}…
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2 px-3">
+                          <button
+                            disabled={b.status === 'MINTED'}
+                            onClick={() => mintBatch(b)}
+                            className={`px-3 py-1 rounded-lg text-[11px] font-semibold border ${
+                              b.status === 'MINTED'
+                                ? 'text-gray-400 border-gray-200 cursor-not-allowed'
+                                : 'text-white bg-orange-500 border-orange-500 hover:bg-orange-600'
+                            }`}
+                          >
+                            {b.status === 'MINTED' ? 'Minted' : 'Mint'}
+                          </button>
                         </td>
                       </tr>
                     ))}
