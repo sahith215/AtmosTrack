@@ -9,6 +9,9 @@ import axios from 'axios';
 import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { Reading } from './models/Reading.js';
+import { ExportRecipe } from './models/ExportRecipe.js';
+
+console.log('PUBLIC_BASE_URL =>', process.env.PUBLIC_BASE_URL);
 
 connectDB();
 
@@ -50,13 +53,30 @@ const creditBatchSchema = new mongoose.Schema({
   tokens: { type: Number, required: true },
   aqiThreshold: { type: Number, default: 150 },
   status: { type: String, enum: ['PENDING', 'MINTED'], default: 'PENDING' },
-  txHash: { type: String }, // NEW
+  txHash: { type: String },
   createdAt: { type: Date, default: Date.now },
 });
 
 const CreditBatch =
-  mongoose.models.CreditBatch ||
-  mongoose.model('CreditBatch', creditBatchSchema);
+  mongoose.models.CreditBatch || mongoose.model('CreditBatch', creditBatchSchema);
+
+// ------------ ExportSubscription model ------------
+const exportSubscriptionSchema = new mongoose.Schema(
+  {
+    email: { type: String, required: true, unique: true },
+    exports: {
+      co2Digest: { type: Boolean, default: true },
+      emissionsLedger: { type: Boolean, default: false },
+      sourceDebug: { type: Boolean, default: false },
+    },
+    runUrl: { type: String, required: true },
+  },
+  { timestamps: true },
+);
+
+const ExportSubscription =
+  mongoose.models.ExportSubscription ||
+  mongoose.model('ExportSubscription', exportSubscriptionSchema);
 
 // ------------ Helpers ------------
 function adjustSourceClassification(sensorReading, modelResult) {
@@ -83,18 +103,34 @@ function adjustSourceClassification(sensorReading, modelResult) {
   return modelResult;
 }
 
+// helper for dynamic field paths like "air.co2ppm"
+function getPath(obj, path) {
+  return path.split('.').reduce((acc, key) => {
+    if (acc == null) return undefined;
+    return acc[key];
+  }, obj);
+}
+
 // ------------ Root ------------
 app.get('/', (req, res) => {
   res.json({
     message: '🌍 AtmosTrack Multi-Sensor Backend Running!',
     version: '3.1.0 - Full Sensor Suite',
-    sensors: ['DHT11 (Temp/Humidity)', 'MG811 (CO2)', 'MQ135 (Air Quality)', 'MPU6050 (IMU)', 'GPS'],
+    sensors: [
+      'DHT11 (Temp/Humidity)',
+      'MG811 (CO2)',
+      'MQ135 (Air Quality)',
+      'MPU6050 (IMU)',
+      'GPS',
+    ],
     endpoints: {
       sensorData: '/api/sensor-data',
       latest: '/api/latest',
       health: '/api/health',
       exportReadings: '/api/exports/readings',
       exportReadingsCsv: '/api/exports/readings/csv',
+      exportRecipe: '/api/exports/recipe',
+      runRecipe: '/api/exports/recipe/:id/run',
       creditBatch: '/api/carbon/credit-batch',
       listBatches: '/api/carbon/batches',
       setLocationFromPhone: '/api/nodes/set-location',
@@ -107,7 +143,9 @@ function buildExportFilter(query) {
   const { from, to, deviceId, context = 'all' } = query;
 
   if (!from || !to) {
-    return { error: 'from and to query parameters are required (ISO timestamps)' };
+    return {
+      error: 'from and to query parameters are required (ISO timestamps)',
+    };
   }
 
   const fromDate = new Date(String(from));
@@ -134,7 +172,7 @@ function buildExportFilter(query) {
   return { filter };
 }
 
-// ------------ Export endpoints ------------
+// ------------ Export endpoints (preview + CSV) ------------
 app.get('/api/exports/readings', async (req, res) => {
   try {
     const { filter, error } = buildExportFilter(req.query);
@@ -309,6 +347,232 @@ app.get('/api/exports/readings/csv', async (req, res) => {
   }
 });
 
+// ------------ Export subscriptions ------------
+app.post('/api/exports/subscription', async (req, res) => {
+  try {
+    const { email, exports, runUrl } = req.body;
+
+    console.log('SUBSCRIPTION HIT with body =>', { email, exports, runUrl });
+    console.log('N8N_SUBSCRIPTION_WEBHOOK =>', process.env.N8N_SUBSCRIPTION_WEBHOOK);
+
+    if (!email || !runUrl) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'email and runUrl required' });
+    }
+
+    const subs = await ExportSubscription.findOneAndUpdate(
+      { email },
+      {
+        email,
+        exports: exports || {
+          co2Digest: true,
+          emissionsLedger: false,
+          sourceDebug: false,
+        },
+        runUrl,
+      },
+      { upsert: true, new: true },
+    );
+
+    const n8nWebhookUrl = process.env.N8N_SUBSCRIPTION_WEBHOOK;
+    if (n8nWebhookUrl) {
+      try {
+        console.log('CALLING N8N WEBHOOK =>', n8nWebhookUrl);
+        await axios.post(n8nWebhookUrl, {
+          email,
+          exports: subs.exports,
+          runUrl: subs.runUrl,
+        });
+        console.log('N8N WEBHOOK CALL OK');
+      } catch (e) {
+        console.error(
+          'Error calling n8n subscription webhook:',
+          e.response?.status,
+          e.response?.data || e.message,
+        );
+      }
+    } else {
+      console.error('N8N_SUBSCRIPTION_WEBHOOK is NOT set');
+    }
+
+    return res.json({ ok: true, subscription: subs });
+  } catch (err) {
+    console.error('Error in /api/exports/subscription:', err);
+    return res
+      .status(500)
+      .json({ ok: false, error: 'Subscription save error' });
+  }
+});
+
+// ------------ Export recipes ------------
+// create recipe
+app.post('/api/exports/recipe', async (req, res) => {
+  try {
+    const {
+      name,
+      questionText = '',
+      deviceId = null,
+      context = 'all',
+      timeRange,
+      fields = [],
+      format = 'csv',
+      language = 'python',
+      delivery = {},
+    } = req.body;
+
+    if (!name || !timeRange?.from || !timeRange?.to) {
+      return res.status(400).json({
+        ok: false,
+        error: 'name, timeRange.from, timeRange.to required',
+      });
+    }
+
+    const recipeId =
+      'rec_' +
+      crypto
+        .createHash('sha256')
+        .update(name + String(timeRange.from) + String(timeRange.to))
+        .digest('hex')
+        .slice(0, 10);
+
+    const recipe = await ExportRecipe.findOneAndUpdate(
+      { recipeId },
+      {
+        recipeId,
+        name,
+        questionText,
+        deviceId,
+        context,
+        timeRange,
+        fields,
+        format,
+        language,
+        delivery,
+      },
+      { upsert: true, new: true },
+    );
+
+    const baseUrl = process.env.PUBLIC_BASE_URL || 'http://172.31.111.86:5000';
+
+    return res.json({
+      ok: true,
+      recipe,
+      runUrl: `${baseUrl}/api/exports/recipe/${recipe.recipeId}/run`,
+    });
+  } catch (err) {
+    console.error('Error in /api/exports/recipe:', err);
+    return res
+      .status(500)
+      .json({ ok: false, error: 'Failed to create export recipe' });
+  }
+});
+
+// run recipe: stream CSV based on stored config
+app.get('/api/exports/recipe/:id/run', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const recipe = await ExportRecipe.findOne({ recipeId: id }).lean();
+
+    if (!recipe) {
+      return res.status(404).send('Recipe not found');
+    }
+
+    const { timeRange, deviceId, context } = recipe;
+    const { filter } = buildExportFilter({
+      from: timeRange.from,
+      to: timeRange.to,
+      deviceId,
+      context,
+    });
+
+    const cursor = Reading.find(filter).sort({ timestamp: 1 }).cursor();
+
+    const defaultColumns = [
+      'timestamp',
+      'deviceId',
+      'sessionId',
+      'location.context',
+      'location.lat',
+      'location.lng',
+      'location.altitude',
+      'location.speed',
+      'environment.temperature',
+      'environment.humidity',
+      'air.aqi',
+      'air.co2ppm',
+      'air.mq135Raw',
+      'air.mq135Volt',
+      'aiFeatures.vocAvg',
+      'aiFeatures.vocStd',
+      'aiFeatures.co2Avg',
+      'aiFeatures.co2Std',
+      'aiFeatures.vibrationAmp',
+      'aiFeatures.vibrationFreq',
+      'aiFeatures.Hour',
+      'sourceClassification.label',
+      'sourceClassification.confidence',
+      'emissions.estimatedCO2eqKg',
+      'emissions.method',
+      'meta.firmwareVersion',
+      'meta.gridRegion',
+    ];
+
+    const columns =
+      Array.isArray(recipe.fields) && recipe.fields.length > 0
+        ? recipe.fields
+        : defaultColumns;
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="atmostrack-${recipe.recipeId}.csv"`,
+    );
+
+    res.write(columns.join(',') + '\n');
+
+    cursor.on('data', (doc) => {
+      const rowValues = columns.map((col) => {
+        if (col === 'timestamp') {
+          return doc.timestamp ? new Date(doc.timestamp).toISOString() : '';
+        }
+        const val = getPath(doc, col);
+        if (val === undefined || val === null) return '';
+        return String(val);
+      });
+
+      res.write(rowValues.join(',') + '\n');
+    });
+
+    cursor.on('end', async () => {
+      await ExportRecipe.updateOne(
+        { recipeId: id },
+        {
+          $set: { lastRunAt: new Date() },
+          $inc: { runCount: 1 },
+        },
+      );
+      res.end();
+    });
+
+    cursor.on('error', (err) => {
+      console.error('Recipe CSV cursor error:', err);
+      if (!res.headersSent) {
+        res.status(500).send('Error generating recipe CSV');
+      } else {
+        res.end();
+      }
+    });
+  } catch (err) {
+    console.error('Error in /api/exports/recipe/:id/run:', err);
+    if (!res.headersSent) {
+      res.status(500).send('Internal recipe run error');
+    } else {
+      res.end();
+    }
+  }
+});
+
 // ------------ AQI / emissions helpers ------------
 function estimateAQIFromMQ135(raw) {
   if (raw == null) return 75;
@@ -408,14 +672,18 @@ app.post('/api/sensor-data', async (req, res) => {
   let CO2_std = null;
 
   const co2Values = aiWindow
-    .map((r) => (r.co2 && typeof r.co2.ppm === 'number' ? r.co2.ppm : null))
+    .map((r) =>
+      r.co2 && typeof r.co2.ppm === 'number' ? r.co2.ppm : null,
+    )
     .filter((v) => v !== null);
 
   if (co2Values.length > 0) {
-    const mean = co2Values.reduce((a, b) => a + b, 0) / co2Values.length;
+    const mean =
+      co2Values.reduce((a, b) => a + b, 0) / co2Values.length;
     const variance =
-      co2Values.map((v) => (v - mean) ** 2).reduce((a, b) => a + b, 0) /
-      co2Values.length;
+      co2Values
+        .map((v) => (v - mean) ** 2)
+        .reduce((a, b) => a + b, 0) / co2Values.length;
     CO2_avg = mean;
     CO2_std = Math.sqrt(variance);
   }
@@ -424,24 +692,36 @@ app.post('/api/sensor-data', async (req, res) => {
   const Hour = now.getHours();
 
   const VOC_values = aiWindow
-    .map((r) => (r.mq135 && typeof r.mq135.raw === 'number' ? r.mq135.raw : null))
+    .map((r) =>
+      r.mq135 && typeof r.mq135.raw === 'number'
+        ? r.mq135.raw
+        : null,
+    )
     .filter((v) => v !== null);
 
   let VOC_avg = null;
   let VOC_std = null;
   if (VOC_values.length > 0) {
-    const meanVOC = VOC_values.reduce((a, b) => a + b, 0) / VOC_values.length;
+    const meanVOC =
+      VOC_values.reduce((a, b) => a + b, 0) / VOC_values.length;
     const varianceVOC =
-      VOC_values.map((v) => (v - meanVOC) ** 2).reduce((a, b) => a + b, 0) /
-      VOC_values.length;
+      VOC_values
+        .map((v) => (v - meanVOC) ** 2)
+        .reduce((a, b) => a + b, 0) / VOC_values.length;
     VOC_avg = meanVOC;
     VOC_std = Math.sqrt(varianceVOC);
   }
 
   const vibValues = aiWindow
     .map((r) =>
-      r.imu && r.imu.ax !== null && r.imu.ay !== null && r.imu.az !== null
-        ? (Math.abs(r.imu.ax) + Math.abs(r.imu.ay) + Math.abs(r.imu.az)) / 3
+      r.imu &&
+      r.imu.ax !== null &&
+      r.imu.ay !== null &&
+      r.imu.az !== null
+        ? (Math.abs(r.imu.ax) +
+            Math.abs(r.imu.ay) +
+            Math.abs(r.imu.az)) /
+          3
         : null,
     )
     .filter((v) => v !== null);
@@ -449,7 +729,8 @@ app.post('/api/sensor-data', async (req, res) => {
   let Vibration_amp = null;
   let Vibration_freq = null;
   if (vibValues.length > 0) {
-    Vibration_amp = vibValues.reduce((a, b) => a + b, 0) / vibValues.length;
+    Vibration_amp =
+      vibValues.reduce((a, b) => a + b, 0) / vibValues.length;
     const threshold = 15000;
     Vibration_freq = aiWindow.filter((r) => {
       const ax = r.imu.ax ?? 0;
@@ -499,7 +780,10 @@ app.post('/api/sensor-data', async (req, res) => {
       })
       .then((response) => {
         const rawResult = response.data;
-        const adjusted = adjustSourceClassification(sensorReading, rawResult);
+        const adjusted = adjustSourceClassification(
+          sensorReading,
+          rawResult,
+        );
         sensorReading.sourceClassification = adjusted;
         latestSensorData = sensorReading;
         io.emit('sensorUpdate', sensorReading);
@@ -532,7 +816,8 @@ app.post('/api/sensor-data', async (req, res) => {
   try {
     const aqi = estimateAQIFromMQ135(sensorReading.mq135.raw);
     const co2ppm = processedCO2 ? processedCO2.ppm : 0;
-    const estimatedCO2eqKg = estimateEmissionsKgFromCO2ppm(co2ppm);
+    const estimatedCO2eqKg =
+      estimateEmissionsKgFromCO2ppm(co2ppm);
 
     const readingDoc = {
       deviceId,
@@ -569,7 +854,8 @@ app.post('/api/sensor-data', async (req, res) => {
       sourceClassification: sensorReading.sourceClassification
         ? {
             label: sensorReading.sourceClassification.label,
-            confidence: sensorReading.sourceClassification.confidence,
+            confidence:
+              sensorReading.sourceClassification.confidence,
           }
         : {
             label: 'Unknown',
@@ -602,7 +888,10 @@ app.post('/api/nodes/set-location', async (req, res) => {
     if (!deviceId || typeof lat !== 'number' || typeof lng !== 'number') {
       return res
         .status(400)
-        .json({ success: false, error: 'deviceId, lat, lng are required' });
+        .json({
+          success: false,
+          error: 'deviceId, lat, lng are required',
+        });
     }
 
     const ts = timestamp ? new Date(timestamp) : new Date();
@@ -650,7 +939,9 @@ app.post('/api/nodes/set-location', async (req, res) => {
     return res.json({ success: true });
   } catch (err) {
     console.error('Error in /api/nodes/set-location:', err);
-    return res.status(500).json({ success: false, error: 'Server error' });
+    return res
+      .status(500)
+      .json({ success: false, error: 'Server error' });
   }
 });
 
@@ -660,7 +951,9 @@ app.get('/api/latest', (req, res) => {
     success: true,
     data: latestSensorData,
     isOnline: latestSensorData
-      ? Date.now() - new Date(latestSensorData.timestamp).getTime() < 30000
+      ? Date.now() -
+          new Date(latestSensorData.timestamp).getTime() <
+        30000
       : false,
   });
 });
@@ -673,7 +966,9 @@ app.get('/api/health', (req, res) => {
     version: '3.1.0',
     sensors: ['DHT11', 'MG811', 'MQ135', 'MPU6050', 'GPS'],
     dataPoints: sensorHistory.length,
-    lastReading: latestSensorData ? latestSensorData.timestamp : null,
+    lastReading: latestSensorData
+      ? latestSensorData.timestamp
+      : null,
   });
 });
 
@@ -706,21 +1001,29 @@ async function computeDHIForDay({ deviceId, date }) {
   }
 
   const count = readings.length;
-  const hoursByCadence = (count * SAMPLE_INTERVAL_SECONDS) / 3600;
+  const hoursByCadence =
+    (count * SAMPLE_INTERVAL_SECONDS) / 3600;
 
   const firstTs = new Date(readings[0].timestamp).getTime();
-  const lastTs = new Date(readings[readings.length - 1].timestamp).getTime();
-  const spanHours = (lastTs - firstTs) / (1000 * 60 * 60);
+  const lastTs = new Date(
+    readings[readings.length - 1].timestamp,
+  ).getTime();
+  const spanHours =
+    (lastTs - firstTs) / (1000 * 60 * 60);
 
   const dhiHours = Math.min(
     hoursByCadence,
     Math.max(spanHours, 0.0167),
   );
-  const tokens = Number((dhiHours * TOKENS_PER_DHI_HOUR).toFixed(4));
+  const tokens = Number(
+    (dhiHours * TOKENS_PER_DHI_HOUR).toFixed(4),
+  );
 
   const batchId = crypto
     .createHash('sha256')
-    .update(`${deviceId}-${date}-${fromTs.toISOString()}-${toTs.toISOString()}`)
+    .update(
+      `${deviceId}-${date}-${fromTs.toISOString()}-${toTs.toISOString()}`,
+    )
     .digest('hex')
     .slice(0, 16);
 
@@ -750,7 +1053,10 @@ app.post('/api/carbon/credit-batch', async (req, res) => {
     if (!date) {
       return res
         .status(400)
-        .json({ ok: false, error: 'date (YYYY-MM-DD) required' });
+        .json({
+          ok: false,
+          error: 'date (YYYY-MM-DD) required',
+        });
     }
 
     const batch = await computeDHIForDay({ deviceId, date });
@@ -768,11 +1074,14 @@ app.post('/api/carbon/credit-batch', async (req, res) => {
     console.error('Error in /api/carbon/credit-batch:', err);
     return res
       .status(500)
-      .json({ ok: false, error: 'Internal DHI calculation error' });
+      .json({
+        ok: false,
+        error: 'Internal DHI calculation error',
+      });
   }
 });
 
-// NEW: simulate on-chain mint
+// simulate on-chain mint
 app.post('/api/carbon/mint-onchain', async (req, res) => {
   try {
     const { batchId, walletAddress } = req.body;
@@ -780,7 +1089,10 @@ app.post('/api/carbon/mint-onchain', async (req, res) => {
     if (!batchId || !walletAddress) {
       return res
         .status(400)
-        .json({ ok: false, error: 'batchId and walletAddress required' });
+        .json({
+          ok: false,
+          error: 'batchId and walletAddress required',
+        });
     }
 
     const batch = await CreditBatch.findOne({ batchId });
@@ -799,7 +1111,8 @@ app.post('/api/carbon/mint-onchain', async (req, res) => {
       });
     }
 
-    const fakeTxHash = 'SIMULATED_POLYGON_TX_' + batchId.slice(0, 8);
+    const fakeTxHash =
+      'SIMULATED_POLYGON_TX_' + batchId.slice(0, 8);
 
     batch.status = 'MINTED';
     batch.txHash = fakeTxHash;
@@ -815,11 +1128,14 @@ app.post('/api/carbon/mint-onchain', async (req, res) => {
     console.error('Error in /api/carbon/mint-onchain:', err);
     return res
       .status(500)
-      .json({ ok: false, error: 'Mint-onchain server error' });
+      .json({
+        ok: false,
+        error: 'Mint-onchain server error',
+      });
   }
 });
 
-// NEW: GET list of batches
+// list batches
 app.get('/api/carbon/batches', async (req, res) => {
   try {
     const { deviceId } = req.query;
@@ -840,11 +1156,16 @@ app.get('/api/carbon/batches', async (req, res) => {
 
 // ------------ WebSocket ------------
 io.on('connection', (socket) => {
-  console.log('🔌 Frontend connected from:', socket.handshake.address);
+  console.log(
+    '🔌 Frontend connected from:',
+    socket.handshake.address,
+  );
 
   if (latestSensorData) {
     socket.emit('sensorUpdate', latestSensorData);
-    console.log('📤 Sent latest multi-sensor data to new connection');
+    console.log(
+      '📤 Sent latest multi-sensor data to new connection',
+    );
   }
 
   socket.on('disconnect', () => {
@@ -864,26 +1185,63 @@ function getCO2Status(ppm) {
 function getCO2HealthAdvice(ppm) {
   if (ppm < 400) return 'Outdoor fresh air quality';
   if (ppm < 1000) return 'Good indoor air quality';
-  if (ppm < 2000) return 'Acceptable but may cause drowsiness';
-  if (ppm < 5000) return 'Poor air quality - increase ventilation';
+  if (ppm < 2000)
+    return 'Acceptable but may cause drowsiness';
+  if (ppm < 5000)
+    return 'Poor air quality - increase ventilation';
   return 'Dangerous levels - evacuate immediately';
 }
 
 // ------------ Server listen ------------
 const PORT = 5000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 AtmosTrack Multi-Sensor Backend running on http://0.0.0.0:${PORT}`);
-  console.log('🔗 Accepting connections from Vite frontend on port 5173');
-  console.log('📡 WebSocket CORS enabled for localhost:5173');
-  console.log('🌍 Sensors: DHT11 + MG811 + MQ135 + MPU6050 + GPS');
+  console.log(
+    `🚀 AtmosTrack Multi-Sensor Backend running on http://0.0.0.0:${PORT}`,
+  );
+  console.log(
+    '🔗 Accepting connections from Vite frontend on port 5173',
+  );
+  console.log(
+    '📡 WebSocket CORS enabled for localhost:5173',
+  );
+  console.log(
+    '🌍 Sensors: DHT11 + MG811 + MQ135 + MPU6050 + GPS',
+  );
   console.log('📊 API Endpoints:');
-  console.log('   POST /api/sensor-data - ESP32 data input');
-  console.log('   POST /api/nodes/set-location - Phone location input');
-  console.log('   GET  /api/latest        - Latest readings');
-  console.log('   GET  /api/health        - System health');
-  console.log('   GET  /api/exports/readings - Export filter endpoint v1');
-  console.log('   GET  /api/exports/readings/csv - CSV export endpoint');
-  console.log('   POST /api/carbon/credit-batch - Compute DHI + tokens for a day');
-  console.log('   POST /api/carbon/mint-onchain - Simulate on-chain mint for a batch');
-  console.log('   GET  /api/carbon/batches      - List recent credit batches');
+  console.log(
+    '   POST /api/sensor-data - ESP32 data input',
+  );
+  console.log(
+    '   POST /api/nodes/set-location - Phone location input',
+  );
+  console.log(
+    '   GET  /api/latest         - Latest readings',
+  );
+  console.log(
+    '   GET  /api/health         - System health',
+  );
+  console.log(
+    '   GET  /api/exports/readings - Export filter endpoint v1',
+  );
+  console.log(
+    '   GET  /api/exports/readings/csv - CSV export endpoint',
+  );
+  console.log(
+    '   POST /api/exports/recipe - Create export recipe',
+  );
+  console.log(
+    '   POST /api/exports/subscription - Save export subscription',
+  );
+  console.log(
+    '   GET  /api/exports/recipe/:id/run - Run export recipe',
+  );
+  console.log(
+    '   POST /api/carbon/credit-batch - Compute DHI + tokens for a day',
+  );
+  console.log(
+    '   POST /api/carbon/mint-onchain - Simulate on-chain mint for a batch',
+  );
+  console.log(
+    '   GET  /api/carbon/batches      - List recent credit batches',
+  );
 });

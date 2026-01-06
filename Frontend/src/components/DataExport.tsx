@@ -29,6 +29,9 @@ const DataExport: React.FC = () => {
   const [isExporting, setIsExporting] = useState(false);
   const [totalMatches, setTotalMatches] = useState<number | null>(null);
   const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
+  const [recipeName, setRecipeName] = useState('');
+  const [emailTo, setEmailTo] = useState('');
+  const [runUrl, setRunUrl] = useState<string | null>(null);
   const { showToast } = useToast();
 
   const metrics = [
@@ -38,7 +41,6 @@ const DataExport: React.FC = () => {
     { id: 'location', label: 'Location Data', icon: MapPin },
   ];
 
-  // small helper to map dateRange -> actual from/to
   const getRange = () => {
     const now = new Date();
     const to = now.toISOString();
@@ -58,6 +60,18 @@ const DataExport: React.FC = () => {
     return { from, to };
   };
 
+  const selectedFields = () => {
+    const base = ['timestamp', 'deviceId', 'location.lat', 'location.lng'];
+    const extra: string[] = [];
+    if (selectedMetrics.includes('aqi')) extra.push('air.aqi');
+    if (selectedMetrics.includes('co2')) extra.push('air.co2ppm');
+    if (selectedMetrics.includes('voc')) extra.push('aiFeatures.vocAvg');
+    if (selectedMetrics.includes('location')) {
+      extra.push('location.context', 'location.lat', 'location.lng');
+    }
+    return Array.from(new Set([...base, ...extra]));
+  };
+
   const handleExport = async (format: ExportFormat) => {
     if (format === 'geojson') {
       showToast('GeoJSON export will be enabled soon.', 'info');
@@ -66,7 +80,6 @@ const DataExport: React.FC = () => {
 
     try {
       setIsExporting(true);
-
       const { from, to } = getRange();
       const params = new URLSearchParams({
         from,
@@ -74,7 +87,6 @@ const DataExport: React.FC = () => {
         context: 'indoor',
       });
 
-      // 1) Hit preview endpoint to keep UI in sync (call backend directly)
       const res = await fetch(
         `http://localhost:5000/api/exports/readings?${params.toString()}`
       );
@@ -84,24 +96,22 @@ const DataExport: React.FC = () => {
         try {
           errBody = await res.json();
         } catch {
-          // response was not JSON (e.g. HTML error page)
+          /* ignore */
         }
         showToast(errBody.error || 'Export failed', 'error');
         setIsExporting(false);
         return;
       }
 
-      // Try to parse preview JSON but don't crash if it's HTML
       let data: any = {};
       try {
         data = await res.json();
         setTotalMatches(data.totalMatches ?? 0);
         setPreviewRows(data.previewSample ?? []);
       } catch {
-        // ignore preview parsing issues, still allow download
+        /* ignore preview errors */
       }
 
-      // 2) Trigger real CSV download with same filter (hit backend directly)
       const csvUrl = `http://localhost:5000/api/exports/readings/csv?${params.toString()}`;
       window.location.href = csvUrl;
 
@@ -117,6 +127,78 @@ const DataExport: React.FC = () => {
     }
   };
 
+  const handleCreateRecipe = async () => {
+    if (!recipeName.trim()) {
+      showToast('Please enter a recipe name.', 'error');
+      return;
+    }
+
+    if (!emailTo.trim()) {
+      showToast('Please enter an email for daily reports.', 'error');
+      return;
+    }
+
+    try {
+      const { from, to } = getRange();
+
+      const body = {
+        name: recipeName.trim(),
+        questionText: '',
+        deviceId: 'ATMOSTRACK-01',
+        context: 'indoor',
+        timeRange: { from, to },
+        fields: selectedFields(),
+        format: 'csv',
+        language: 'python',
+        delivery: {
+          emailEnabled: true,
+          emailTo: emailTo.trim(),
+          driveEnabled: false,
+          driveType: null,
+          drivePath: null,
+        },
+      };
+
+      const res = await fetch('http://localhost:5000/api/exports/recipe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        showToast(data.error || 'Failed to create recipe.', 'error');
+        return;
+      }
+
+      setRunUrl(data.runUrl);
+      showToast('Export recipe created. Daily automation will use this recipe.', 'success');
+
+      // Tell backend to subscribe this email + kick n8n webhook once
+      try {
+        await fetch('http://localhost:5000/api/exports/subscription', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: emailTo.trim(),
+            exports: {
+              co2Digest: true,
+              emissionsLedger: false,
+              sourceDebug: false,
+            },
+            runUrl: data.runUrl,
+          }),
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Network error while creating recipe.', 'error');
+    }
+  };
+
   const toggleMetric = (metricId: string) => {
     setSelectedMetrics((prev) =>
       prev.includes(metricId) ? prev.filter((id) => id !== metricId) : [...prev, metricId]
@@ -125,7 +207,6 @@ const DataExport: React.FC = () => {
 
   return (
     <div className="pt-16 p-6 space-y-8 animate-fade-in min-h-screen bg-gradient-to-br from-cream-50 to-orange-50">
-      {/* Header */}
       <div className="text-center mb-12">
         <h1 className="text-4xl font-bold text-gray-800 mb-4">Data Export Center</h1>
         <p className="text-lg text-gray-600 max-w-2xl mx-auto">
@@ -133,13 +214,10 @@ const DataExport: React.FC = () => {
         </p>
       </div>
 
-      {/* Export Configuration */}
       <div className="max-w-4xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Export Options */}
         <div className="space-y-6">
           <h2 className="text-2xl font-bold text-gray-800">Export Configuration</h2>
 
-          {/* Format Selection */}
           <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-cream-200">
             <h3 className="text-lg font-semibold text-gray-800 mb-4">Format Selection</h3>
             <div className="grid grid-cols-2 gap-4">
@@ -177,7 +255,6 @@ const DataExport: React.FC = () => {
             </div>
           </div>
 
-          {/* Date Range */}
           <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-cream-200">
             <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
               <Calendar className="h-5 w-5 mr-2" />
@@ -195,7 +272,6 @@ const DataExport: React.FC = () => {
             </select>
           </div>
 
-          {/* Metrics Selection */}
           <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-cream-200">
             <h3 className="text-lg font-semibold text-gray-800 mb-4">Data Metrics</h3>
             <div className="space-y-3">
@@ -221,11 +297,61 @@ const DataExport: React.FC = () => {
           </div>
         </div>
 
-        {/* Export Actions & Preview */}
         <div className="space-y-6">
           <h2 className="text-2xl font-bold text-gray-800">Export Actions</h2>
 
-          {/* Export Buttons */}
+          <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-cream-200 space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">Create Export Recipe</h3>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Recipe name
+                </label>
+                <input
+                  value={recipeName}
+                  onChange={(e) => setRecipeName(e.target.value)}
+                  placeholder="e.g. Daily Indoor CO₂ Digest"
+                  className="w-full p-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-400 focus:border-orange-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Email (required for daily reports)
+                </label>
+                <input
+                  type="email"
+                  value={emailTo}
+                  onChange={(e) => setEmailTo(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full p-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-400 focus:border-orange-400"
+                />
+              </div>
+
+              <button
+                onClick={handleCreateRecipe}
+                disabled={isExporting}
+                className={`
+                  w-full p-3 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-xl
+                  font-semibold shadow-lg hover:shadow-xl transform transition-all duration-200
+                  ${isExporting ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02]'}
+                  flex items-center justify-center space-x-2
+                `}
+              >
+                <CheckCircle className="h-5 w-5" />
+                <span>Start daily automation emails</span>
+              </button>
+
+              {runUrl && (
+                <div className="mt-2 text-xs text-gray-600 break-all bg-gray-50 border border-dashed border-gray-200 rounded-lg p-2">
+                  <div className="font-semibold mb-1">Automation URL (for backend/n8n):</div>
+                  <div>{runUrl}</div>
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="space-y-4">
             <button
               onClick={() => handleExport('csv')}
@@ -265,7 +391,6 @@ const DataExport: React.FC = () => {
             </button>
           </div>
 
-          {/* Data Preview */}
           <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-cream-200">
             <h3 className="text-lg font-semibold text-gray-800 mb-2">Data Preview</h3>
             <p className="text-sm text-gray-500 mb-4">
@@ -312,7 +437,6 @@ const DataExport: React.FC = () => {
             </div>
           </div>
 
-          {/* Format Information */}
           <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-cream-200">
             <h3 className="text-lg font-semibold text-gray-800 mb-4">Format Information</h3>
             {exportFormat === 'csv' ? (

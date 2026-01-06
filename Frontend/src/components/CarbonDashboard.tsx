@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Wallet, RefreshCw, ArrowRightCircle } from 'lucide-react';
+import { Wallet, RefreshCw, ArrowRightCircle, Info, X } from 'lucide-react';
 
 type WalletState = {
   address: string | null;
@@ -47,6 +47,8 @@ const CarbonDashboard: React.FC = () => {
     offsetPercent: 100,
   });
   const [txStatus, setTxStatus] = useState<string | null>(null);
+
+  const [showCreditsGuide, setShowCreditsGuide] = useState(false);
 
   // WALLET
   const connectWallet = async () => {
@@ -175,7 +177,149 @@ const CarbonDashboard: React.FC = () => {
   };
 
   return (
-    <div className="pt-16 p-6 space-y-8 animate-fade-in min-h-screen bg-gradient-to-br from-cream-50 to-orange-50">
+    <div className="pt-16 p-6 space-y-8 animate-fade-in min-h-screen bg-gradient-to-br from-cream-50 to-orange-50 relative">
+      {/* POPUP OVERLAY */}
+      {showCreditsGuide && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="relative w-[90%] max-w-4xl max-h-[80vh] bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col lg:flex-row">
+            {/* Accent side strip */}
+            <div className="hidden lg:flex w-2 bg-gradient-to-b from-orange-500 via-amber-400 to-emerald-500" />
+
+            <div className="flex-1 p-6 sm:p-8 overflow-y-auto">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 text-amber-700 text-xs font-semibold mb-2">
+                    <Info className="w-3 h-3" />
+                    AtmosTrack Carbon Credit Guide
+                  </div>
+                  <h2 className="text-2xl sm:text-3xl font-bold text-gray-900">
+                    How credits and DHI work in AtmosTrack
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    A quick walkthrough of the math behind your Daily Impact Hours (DHI),
+                    CCT tokens and how this page fits into the bigger story.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowCreditsGuide(false)}
+                  className="ml-4 rounded-full p-1.5 hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Content grid */}
+              <div className="grid md:grid-cols-2 gap-6 mt-4 text-sm text-gray-700">
+                <div className="space-y-4">
+                  <div className="bg-cream-50 border border-cream-200 rounded-2xl p-4">
+                    <h3 className="font-semibold text-gray-900 mb-1">1. Device‑Hours → DHI</h3>
+                    <p>
+                      AtmosTrack samples your device roughly every 30 seconds and checks how long
+                      it has been actively measuring and improving air quality for a given day.
+                    </p>
+                    <p className="mt-2 text-xs text-gray-500">
+                      DHI (h) ≈ number of valid readings × 30s ÷ 3600, capped and sanity‑checked
+                      by the span between the first and last reading of the day.
+                    </p>
+                  </div>
+
+                  <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4">
+                    <h3 className="font-semibold text-gray-900 mb-1">2. DHI → CCT tokens</h3>
+                    <p>
+                      For AtmosTrack demo economics, each hour of DHI mints a small amount of
+                      Carbon Cleaning Tokens (CCT).
+                    </p>
+                    <p className="mt-2 text-xs text-gray-600">
+                      Tokens = DHI × 0.1  
+                      So a 4.95‑hour batch creates about 0.49 CCT tokens.
+                    </p>
+                  </div>
+
+                  <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4">
+                    <h3 className="font-semibold text-gray-900 mb-1">
+                      3. Emissions → Required tokens
+                    </h3>
+                    <p>
+                      In the Offset Planner, you enter your emissions in tonnes of CO₂e and choose
+                      how much you want to offset.
+                    </p>
+                    <p className="mt-2 text-xs text-gray-600">
+                      Required CCT = (Emissions in tCO₂e × Offset %) ÷ 100  
+                      Example: 1 tCO₂e at 100% offset → 1.00 required CCT.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="bg-sky-50 border border-sky-100 rounded-2xl p-4">
+                    <h3 className="font-semibold text-gray-900 mb-1">
+                      4. This table = your daily batches
+                    </h3>
+                    <p>
+                      Every row in the “Credit Batches” table on the right is one calendar day
+                      for a specific device. DHI shows how long you had climate‑positive activity,
+                      and Tokens shows how much CCT that day can mint.
+                    </p>
+                    <p className="mt-2 text-xs text-gray-600">
+                      Status <span className="font-semibold">PENDING</span> means it can still be
+                      minted. <span className="font-semibold">MINTED</span> means it has been
+                      converted into CCT on‑chain (simulated in this prototype).
+                    </p>
+                  </div>
+
+                  <div className="bg-purple-50 border border-purple-100 rounded-2xl p-4">
+                    <h3 className="font-semibold text-gray-900 mb-1">
+                      5. Retiring tokens = claiming the offset
+                    </h3>
+                    <p>
+                      When you “retire” CCT, those tokens are locked and can no longer be traded.
+                      In AtmosTrack, retirement is what lets you claim an emissions offset for
+                      a given period.
+                    </p>
+                    <p className="mt-2 text-xs text-gray-600">
+                      In this demo, the “Retire tokens” button just simulates retirement for your
+                      connected Polygon wallet, so you can try the UX without real on‑chain costs.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-900 text-slate-100 rounded-2xl p-4">
+                    <h3 className="font-semibold mb-1">How to use this page</h3>
+                    <ol className="list-decimal list-inside space-y-1 text-xs sm:text-[13px]">
+                      <li>Connect your MetaMask wallet (Polygon) at the top.</li>
+                      <li>
+                        In Offset Planner, pick your device + date, enter emissions and offset %.  
+                      </li>
+                      <li>Click “Compute DHI & Tokens” to generate or refresh that day’s batch.</li>
+                      <li>
+                        In Credit Batches, review DHI(h) and Tokens, then hit “Mint” to simulate
+                        CCT creation.
+                      </li>
+                      <li>
+                        Finally, press “Retire tokens” once you have enough CCT to cover your
+                        required amount.
+                      </li>
+                    </ol>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-gray-500">
+                  All numbers here are demo‑economics to illustrate how a device can stream
+                  verifiable climate impact into tokenized carbon credits.
+                </p>
+                <button
+                  onClick={() => setShowCreditsGuide(false)}
+                  className="px-4 py-2 rounded-full bg-gradient-to-r from-orange-500 to-amber-500 text-white text-xs font-semibold shadow-md hover:shadow-lg hover:scale-[1.02] transition"
+                >
+                  Got it – back to batches
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="text-center mb-8">
         <h1 className="text-4xl font-bold text-gray-800 mb-3">
@@ -413,6 +557,30 @@ const CarbonDashboard: React.FC = () => {
                 </table>
               </div>
             )}
+          </div>
+
+          {/* Education teaser card under batches */}
+          <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 rounded-2xl p-5 shadow-xl border border-slate-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-800/70 border border-slate-600 text-[11px] font-semibold text-slate-200 mb-2">
+                <Info className="w-3 h-3 text-amber-300" />
+                New to carbon credits?
+              </div>
+              <h3 className="text-lg font-semibold text-white">
+                Not sure what these batches and tokens mean?
+              </h3>
+              <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-md">
+                Learn how AtmosTrack translates your device’s cleaning time into carbon credits
+                and how to use DHI, tokens, and retirement to plan real offsets.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowCreditsGuide(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 text-slate-900 text-xs font-semibold shadow-md hover:shadow-lg hover:scale-[1.03] transition"
+            >
+              Learn about AtmosTrack credits
+              <ArrowRightCircle className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>
