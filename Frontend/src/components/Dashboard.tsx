@@ -15,9 +15,11 @@ import {
   Zap,
 } from 'lucide-react';
 import CountUp from './CountUp';
-import io from 'socket.io-client';
+import { useAuth } from '../contexts/AuthContext';
+import { User } from '../types/user';
+import { useRealtime } from '../contexts/RealtimeContext';
+import type { LiveReading } from '../types/LiveReading';
 
-// 🔥 UPDATED: Real backend interface matching your new /api/sensor-data structure
 interface SensorData {
   deviceId: string;
   environment: {
@@ -52,24 +54,172 @@ interface SensorData {
   timestamp: string;
 }
 
+// ---------- email verification inner component (top-level) ----------
+const API_BASE = 'http://localhost:5000';
+
+const EmailVerifyInner: React.FC<{
+  email: string;
+  onVerified: (user: User) => void;
+}> = ({ email, onVerified }) => {
+  const [code, setCode] = useState('');
+  const [step, setStep] = useState<'idle' | 'sent'>('idle');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSendCode = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetch(`${API_BASE}/api/auth/request-verification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        console.log('request-verification fail', data);
+        setError(data.error || 'Failed to send verification code');
+        return;
+      }
+      setStep('sent');
+    } catch (e) {
+      console.error(e);
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerify = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetch(`${API_BASE}/api/auth/verify-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        console.log('verify-email fail', data);
+        setError(data.error || 'Invalid or expired code');
+        return;
+      }
+      onVerified(data.user as User);
+    } catch (e) {
+      console.error(e);
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 space-y-3">
+      <button
+        onClick={handleSendCode}
+        disabled={loading}
+        className="w-full rounded-xl bg-amber-400 text-slate-900 text-xs font-semibold px-3 py-2 hover:bg-amber-300 disabled:opacity-60 disabled:cursor-not-allowed transition"
+      >
+        {loading && step === 'idle'
+          ? 'Sending...'
+          : step === 'idle'
+          ? 'Send code to my email'
+          : 'Resend code'}
+      </button>
+
+      {step === 'sent' && (
+        <>
+          <div className="space-y-1">
+            <label className="text-[11px] font-medium text-slate-200">
+              Enter 6‑digit code
+            </label>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              maxLength={6}
+              className="w-full rounded-xl bg-slate-800 border border-slate-700 px-3 py-2 text-sm text-slate-100 outline-none focus:ring-2 focus:ring-amber-400/60"
+              placeholder="123456"
+            />
+          </div>
+          <button
+            onClick={handleVerify}
+            disabled={loading || code.length !== 6}
+            className="w-full rounded-xl bg-emerald-400 text-slate-900 text-xs font-semibold px-3 py-2 hover:bg-emerald-300 disabled:opacity-60 disabled:cursor-not-allowed transition"
+          >
+            {loading ? 'Verifying...' : 'Verify email'}
+          </button>
+        </>
+      )}
+
+      {error && (
+        <p className="text-[11px] text-rose-300 mt-1">{error}</p>
+      )}
+    </div>
+  );
+};
+
 const Dashboard: React.FC = () => {
+  const { user, setUser } = useAuth(); // make sure AuthContext exposes setUser
+  const { latestReading, status } = useRealtime();
+
+  // Map LiveReading → SensorData so the rest of the component stays unchanged
+  const liveData: SensorData | null = latestReading
+  ? {
+      deviceId: latestReading.deviceId,
+      environment: {
+        temperature: latestReading.environment?.temperature ?? null,
+        humidity: latestReading.environment?.humidity ?? null,
+      },
+      // rest stays exactly as you pasted
+      imu: {
+        ax: latestReading.imu?.ax ?? null,
+        ay: latestReading.imu?.ay ?? null,
+        az: latestReading.imu?.az ?? null,
+        gx: latestReading.imu?.gx ?? null,
+        gy: latestReading.imu?.gy ?? null,
+        gz: latestReading.imu?.gz ?? null,
+      },
+      location: {
+        lat: latestReading.location?.lat ?? null,
+        lng: latestReading.location?.lng ?? null,
+        speed: latestReading.location?.speed ?? null,
+      },
+      purification: {
+        on: latestReading.purification?.on ?? false,
+      },
+      co2: latestReading.co2
+        ? {
+            ppm: latestReading.co2.ppm,
+            status: latestReading.co2.status,
+            healthAdvice: latestReading.co2.healthAdvice,
+          }
+        : null,
+      mq135: {
+        raw: latestReading.mq135?.raw ?? null,
+        volt: latestReading.mq135?.volt ?? null,
+      },
+      timestamp: latestReading.timestamp,
+    }
+  : null;
+
   const [aqiValue, setAqiValue] = useState(0);
   const [co2Value, setCo2Value] = useState(0);
   const [isTransitioning, setIsTransitioning] = useState(false);
-  const [liveData, setLiveData] = useState<SensorData | null>(null);
   const [isOnline, setIsOnline] = useState(false);
 
-  // ✅ new: last phone location (for heading display)
   const [latestPhoneLocation, setLatestPhoneLocation] =
     useState<{ lat: number; lng: number } | null>(null);
 
-  // 🔥 Convert MQ135 raw to AQI (0-4095 → 0-500)
+  // NEW: banner / modal state
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
+  const [hideVerifyBanner, setHideVerifyBanner] = useState(false);
+
   const convertRawToAQI = (rawValue: number): number => {
     const aqi = Math.floor((rawValue / 4095) * 500);
     return Math.max(0, Math.min(500, aqi));
   };
 
-  // 🔥 Get MQ135 status from raw value
   const getMQ135Status = (raw: number): string => {
     if (raw <= 800) return 'Excellent';
     if (raw <= 1500) return 'Good';
@@ -87,48 +237,12 @@ const Dashboard: React.FC = () => {
     return `${Math.floor(diffInSeconds / 3600)} hours ago`;
   };
 
-  // Socket connection
+  // Drive online status from shared connection status
   useEffect(() => {
-    const newSocket = io('http://localhost:5000', {
-      transports: ['websocket', 'polling'],
-    });
+    setIsOnline(status === 'connected');
+  }, [status]);
 
-    newSocket.on('connect', () => {
-      console.log('🔌 Connected to AtmosTrack backend');
-      setIsOnline(true);
-    });
-
-    newSocket.on('sensorUpdate', (data: SensorData) => {
-      console.log('📊 Real multi-sensor data:', data);
-      setLiveData(data);
-    });
-
-    newSocket.on('disconnect', () => {
-      setIsOnline(false);
-    });
-
-    fetchLatestData();
-
-    return () => {
-      newSocket.disconnect();
-    };
-  }, []);
-
-  const fetchLatestData = async () => {
-    try {
-      const response = await fetch('http://localhost:5000/api/latest');
-      const result = await response.json();
-
-      if (result.success && result.data) {
-        setLiveData(result.data);
-        setIsOnline(result.isOnline);
-      }
-    } catch (error) {
-      console.error('Error fetching initial data:', error);
-    }
-  };
-
-  // ✅ new: on mount, restore phone location from localStorage and re-sync backend
+  // on mount, restore phone location from localStorage and re-sync backend
   useEffect(() => {
     const saved = localStorage.getItem('atmostrack-phone-location');
     if (!saved) return;
@@ -148,13 +262,14 @@ const Dashboard: React.FC = () => {
     }).catch(() => {});
   }, []);
 
-  // Derived “single station” values from liveData
+  // Derived values from liveData
   const aqi = liveData?.mq135?.raw ? convertRawToAQI(liveData.mq135.raw) : 0;
   const co2Ppm = liveData?.co2?.ppm ?? 0;
   const lastUpdated = liveData ? getTimeAgo(liveData.timestamp) : 'No data';
-  const healthAdvice = liveData?.co2?.healthAdvice ?? 'Waiting for live sensor data...';
+  const healthAdvice =
+    liveData?.co2?.healthAdvice ?? 'Waiting for live sensor data...';
 
-  // Animate AQI and CO2 values
+  // Animate AQI and CO2
   useEffect(() => {
     setIsTransitioning(true);
 
@@ -203,35 +318,71 @@ const Dashboard: React.FC = () => {
     return 'Poor';
   };
 
-  const getStatusBadgeColor = (status: string) => {
-    if (status === 'Live Monitoring') return 'bg-green-100 text-green-700';
-    if (status === 'Offline') return 'bg-red-100 text-red-700';
+  const getStatusBadgeColor = (statusLabel: string) => {
+    if (statusLabel === 'Live Monitoring') return 'bg-green-100 text-green-700';
+    if (statusLabel === 'Offline') return 'bg-red-100 text-red-700';
     return 'bg-blue-100 text-blue-700';
   };
 
-  // Use liveData.deviceId (if any) as selected node for location setting
+  // Use liveData.deviceId as selected node
   const selectedDeviceId = liveData?.deviceId ?? null;
 
   return (
     <div className="pt-16 p-6 space-y-8 animate-fade-in min-h-screen bg-gradient-to-br from-cream-50 to-orange-50">
       {/* Header */}
       <div className="text-center mb-8">
-        <div className="flex items-center justify-center space-x-3 mb-4">
-          <h1 className="text-4xl font-bold text-gray-800">AtmosTrack Live Dashboard</h1>
-          <div
-            className={`flex items-center space-x-2 px-3 py-1 rounded-full text-sm font-medium ${
-              isOnline ? 'bg-green-100 text-green-700 animate-pulse' : 'bg-red-100 text-red-700'
-            }`}
-          >
-            {isOnline ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
-            {isOnline ? 'Live' : 'Offline'}
+        <div className="flex flex-col items-center space-y-2 mb-2">
+          <div className="flex items-center space-x-3">
+            <h1 className="text-4xl font-bold text-gray-800">AtmosTrack Live Dashboard</h1>
+            <div
+              className={`flex items-center space-x-2 px-3 py-1 rounded-full text-sm font-medium ${
+                isOnline ? 'bg-green-100 text-green-700 animate-pulse' : 'bg-red-100 text-red-700'
+              }`}
+            >
+              {isOnline ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+              {isOnline ? 'Live' : 'Offline'}
+            </div>
           </div>
+
+          {/* Account summary line with lastLogin */}
+          <p className="text-xs text-gray-500">
+            Signed in as <span className="font-semibold">{user?.name}</span> ({user?.role}) · Last
+            login:{' '}
+            {user?.lastLogin ? new Date(user.lastLogin).toLocaleString() : 'First time login'}
+          </p>
         </div>
         <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-          Real-time multi-sensor monitoring from your AtmosTrack Mobile Sensor Node with ESP32 +
-          DHT11 + MQ135 + MG811 + MPU6050 + GPS integration.
+          Your city’s pollution can run, but it can’t hide from this dashboard.
         </p>
       </div>
+
+      {/* Email verification teaser banner */}
+      {!hideVerifyBanner && user && user.emailVerified === false && (
+        <div className="max-w-4xl mx-auto mb-4 bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 text-slate-900 px-4 py-3 rounded-2xl shadow-lg flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold tracking-wide uppercase">
+              Verify your email to unlock exports &amp; Carbon Hub
+            </p>
+            <p className="text-xs sm:text-sm opacity-90">
+              We use verification to protect your AtmosTrack credits and account activity.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowVerifyModal(true)}
+              className="px-3 py-1.5 rounded-xl bg-slate-900 text-amber-300 text-xs font-semibold hover:bg-slate-800 transition"
+            >
+              Verify now
+            </button>
+            <button
+              onClick={() => setHideVerifyBanner(true)}
+              className="text-[11px] text-slate-900/80 hover:underline"
+            >
+              Maybe later
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Station info (no dropdown) */}
       <div className="max-w-4xl mx-auto">
@@ -264,14 +415,67 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* Account details card – gradient, chip, badges */}
+      <div className="max-w-4xl mx-auto mb-6">
+        <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 rounded-2xl p-5 shadow-xl border border-slate-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-800/70 border border-slate-600 text-[11px] font-semibold text-slate-200 mb-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              Account connected
+            </div>
+            <h3 className="text-lg font-semibold text-white">
+              {user?.name || 'AtmosTrack user'}
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-300 mt-1">{user?.email}</p>
+            <div className="flex flex-wrap gap-2 mt-3 text-xs">
+              <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-slate-800/80 text-slate-200 border border-slate-600">
+                Role:&nbsp;
+                <span className="font-semibold capitalize">{user?.role}</span>
+              </span>
+              <span
+                className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs ${
+                  user?.emailVerified
+                    ? 'bg-emerald-500/10 border-emerald-400 text-emerald-200'
+                    : 'bg-amber-500/10 border-amber-400 text-amber-200'
+                }`}
+              >
+                {user?.emailVerified ? 'Email verified' : 'Email not verified'}
+              </span>
+              <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-slate-800/80 border border-slate-600 text-slate-200">
+                Last login:&nbsp;
+                <span className="font-mono">
+                  {user?.lastLogin ? new Date(user.lastLogin).toLocaleString() : 'First session'}
+                </span>
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-col items-stretch gap-2 w-full sm:w-auto">
+            <span className="text-[11px] uppercase tracking-wide text-slate-400">
+              Quick actions
+            </span>
+            <button
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-500 text-slate-900 text-xs font-semibold shadow-md hover:shadow-lg hover:scale-[1.03] transition"
+            >
+              Manage profile
+            </button>
+            <button
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-slate-800 text-slate-100 text-xs font-medium border border-slate-600 hover:bg-slate-700 transition"
+            >
+              View account activity
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Hero Cards: DHT11, MQ135, MG811 */}
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* DHT11 card (always rendered) */}
+        {/* DHT11 card */}
         <div
-          className={`
+          className="
             bg-gradient-to-br from-blue-50 to-cyan-100 rounded-3xl p-8 shadow-lg backdrop-blur-sm 
             border border-white/50 transform hover:scale-[1.02] transition-all duration-300
-          `}
+          "
         >
           <div className="text-center">
             <div className="flex items-center justify-center mb-2">
@@ -313,10 +517,10 @@ const Dashboard: React.FC = () => {
         {/* MQ135 card */}
         <div
           className={`
-          ${getAQIBg(aqi)} rounded-3xl p-8 shadow-lg backdrop-blur-sm 
-          border border-white/50 transform hover:scale-[1.02] transition-all duration-300
-          ${isTransitioning ? 'opacity-75 scale-95' : 'opacity-100 scale-100'}
-        `}
+            ${getAQIBg(aqi)} rounded-3xl p-8 shadow-lg backdrop-blur-sm 
+            border border-white/50 transform hover:scale-[1.02] transition-all duration-300
+            ${isTransitioning ? 'opacity-75 scale-95' : 'opacity-100 scale-100'}
+          `}
         >
           <div className="text-center">
             <div className="flex items-center justify-center mb-2">
@@ -358,10 +562,10 @@ const Dashboard: React.FC = () => {
         {/* MG811 card */}
         <div
           className={`
-          bg-blue-100 rounded-3xl p-8 shadow-lg backdrop-blur-sm 
-          border border-white/50 transform hover:scale-[1.02] transition-all duration-300
-          ${isTransitioning ? 'opacity-75 scale-95' : 'opacity-100 scale-100'}
-        `}
+            bg-blue-100 rounded-3xl p-8 shadow-lg backdrop-blur-sm 
+            border border-white/50 transform hover:scale-[1.02] transition-all duration-300
+            ${isTransitioning ? 'opacity-75 scale-95' : 'opacity-100 scale-100'}
+          `}
         >
           <div className="text-center">
             <div className="flex items-center justify-center mb-2">
@@ -472,7 +676,6 @@ const Dashboard: React.FC = () => {
                 </div>
               )}
 
-            {/* ✅ new heading-style phone coordinates */}
             <div className="mt-3 flex items-center justify-between">
               <div className="text-xs font-semibold text-gray-500 uppercase">
                 Phone-linked node location
@@ -485,7 +688,6 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* phone-based location setter */}
           <div className="mt-4 pt-4 border-t border-cream-200">
             <NodeLocationSetter
               selectedDeviceId={selectedDeviceId}
@@ -520,18 +722,20 @@ const Dashboard: React.FC = () => {
       <div className="max-w-4xl mx-auto">
         <h2 className="text-2xl font-bold text-gray-800 mb-6">Live Sensor Updates</h2>
         <div className="space-y-4">
-          {liveData?.environment && (
-            <div className="bg-white/80 backdrop-blur-md rounded-xl p-4 shadow-sm border border-cream-200 flex items-center space-x-4">
-              <div className="w-3 h-3 rounded-full bg-cyan-400 animate-pulse"></div>
-              <div className="flex-1">
-                <p className="text-gray-800">
-                  🌡️ DHT11: {liveData.environment.temperature}°C,{' '}
-                  {liveData.environment.humidity}% RH
-                </p>
-                <p className="text-sm text-gray-500">{getTimeAgo(liveData.timestamp)}</p>
-              </div>
-            </div>
-          )}
+         {liveData?.environment && (
+  <div className="bg-white/80 backdrop-blur-md rounded-xl p-4 shadow-sm border border-cream-200 flex items-center space-x-4">
+    <div className="w-3 h-3 rounded-full bg-cyan-400 animate-pulse"></div>
+    <div className="flex-1">
+      <p className="text-gray-800">
+        🌡️ DHT11: {liveData.environment?.temperature ?? 0}°C,{' '}
+        {liveData.environment?.humidity ?? 0}% RH
+      </p>
+      <p className="text-sm text-gray-500">{getTimeAgo(liveData.timestamp)}</p>
+    </div>
+  </div>
+)}
+
+
 
           {liveData?.mq135 && (
             <div className="bg-white/80 backdrop-blur-md rounded-xl p-4 shadow-sm border border-cream-200 flex items-center space-x-4">
@@ -583,6 +787,37 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {showVerifyModal && user && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl bg-slate-900 border border-slate-700 p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-white">Verify your email</h2>
+                <p className="mt-1 text-xs text-slate-300">
+                  A 6‑digit code will be sent to{' '}
+                  <span className="font-medium text-amber-300">{user.email}</span>.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowVerifyModal(false)}
+                className="text-slate-400 hover:text-slate-200 text-xs"
+              >
+                ✕
+              </button>
+            </div>
+
+            <EmailVerifyInner
+              email={user.email}
+              onVerified={(updatedUser) => {
+                setUser?.((prev) => (prev ? { ...prev, ...updatedUser } : updatedUser));
+                setHideVerifyBanner(true);
+                setShowVerifyModal(false);
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Wind, Menu, X } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 interface NavbarProps {
   activeView: string;
@@ -8,19 +9,30 @@ interface NavbarProps {
 
 const Navbar: React.FC<NavbarProps> = ({ activeView, setActiveView }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { user, logout } = useAuth();
 
-  const navItems = [
+  const baseItems = [
     { id: 'home', label: 'Home' },
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'map', label: 'Map View' },
     { id: 'health', label: 'Health Alerts' },
     { id: 'carbon', label: 'Carbon Hub' },
-    { id: 'export', label: 'Data Export' },          // 👈 new tab
+    { id: 'export', label: 'Data Export' },
   ];
+
+  const navItems =
+    user?.role === 'admin'
+      ? [...baseItems, { id: 'admin', label: 'Admin' }]
+      : baseItems;
 
   const handleNavClick = (viewId: string) => {
     setActiveView(viewId);
     setMobileMenuOpen(false);
+  };
+
+  const handleLogout = () => {
+    logout();
+    setActiveView('home');
   };
 
   return (
@@ -56,10 +68,23 @@ const Navbar: React.FC<NavbarProps> = ({ activeView, setActiveView }) => {
                 {item.label}
               </button>
             ))}
+
+            {/* Logout */}
+            <button
+              onClick={handleLogout}
+              className="ml-3 px-3 py-2 rounded-lg text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-cream-100 transition-all"
+            >
+              Logout
+            </button>
           </div>
 
           {/* Mobile menu button */}
-          <div className="md:hidden">
+          <div className="md:hidden flex items-center gap-2">
+            {user && (
+              <span className="text-[11px] text-gray-500">
+                {user.role === 'admin' ? 'ADMIN' : 'USER'}
+              </span>
+            )}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className="p-2 rounded-lg text-gray-600 hover:text-gray-800 hover:bg-cream-100 transition-colors duration-200"
@@ -89,6 +114,13 @@ const Navbar: React.FC<NavbarProps> = ({ activeView, setActiveView }) => {
                   {item.label}
                 </button>
               ))}
+
+              <button
+                onClick={handleLogout}
+                className="block w-full text-left px-3 py-2 rounded-lg font-semibold text-sm text-gray-700 hover:bg-cream-100"
+              >
+                Logout
+              </button>
             </div>
           </div>
         )}
