@@ -2,6 +2,8 @@ import React, { useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Eye, EyeOff, Mail, Lock, User, Chrome } from 'lucide-react';
 import { useToast } from '../contexts/ToastContext';
+import { useAuth } from '../contexts/AuthContext';
+
 
 interface LoginFormProps {
   onLogin: (email: string, password: string) => Promise<void>;
@@ -12,6 +14,12 @@ interface LoginFormProps {
     code: string,
     newPassword: string,
   ) => Promise<void>;
+}
+
+declare global {
+  interface Window {
+    google?: any;
+  }
 }
 
 const AtmosTrackAuthCard: React.FC<LoginFormProps> = ({
@@ -26,6 +34,7 @@ const AtmosTrackAuthCard: React.FC<LoginFormProps> = ({
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { showToast } = useToast();
+  const { login } = useAuth();
   const cardRef = useRef<HTMLDivElement | null>(null);
 
   // reset modal state
@@ -110,6 +119,54 @@ const AtmosTrackAuthCard: React.FC<LoginFormProps> = ({
       setIsResetSubmitting(false);
     }
   };
+
+  const handleGoogleClick = () => {
+  if (
+    !window.google ||
+    !window.google.accounts ||
+    !window.google.accounts.oauth2
+  ) {
+    showToast('Google SDK not loaded yet. Refresh the page.', 'error');
+    return;
+  }
+
+  const client = window.google.accounts.oauth2.initTokenClient({
+    client_id:
+      '995692387798-qnk1n9vr40oour4d6r2gelbg5h6grhh2.apps.googleusercontent.com',
+    scope: 'openid email profile',
+    callback: async (tokenResponse: any) => {
+      console.log('Google tokenResponse =>', tokenResponse);
+
+      if (!tokenResponse?.access_token) {
+        showToast('Google did not return an access token.', 'error');
+        return;
+      }
+
+      try {
+        const res = await fetch('http://localhost:5000/api/auth/google', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accessToken: tokenResponse.access_token }),
+        });
+
+        const data = await res.json();
+        console.log('/api/auth/google response =>', data);
+
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || 'Google sign‑in failed');
+        }
+
+        login(data.user, data.token);
+        showToast('Signed in with Google.', 'success');
+      } catch (err: any) {
+        showToast(err?.message || 'Google sign‑in failed', 'error');
+      }
+    },
+  });
+
+  client.requestAccessToken();
+};
+
 
   return (
     <div className="relative min-h-screen flex items-center justify-center bg-gradient-to-br from-cream-50 via-orange-50 to-cream-100 px-4 overflow-hidden">
@@ -373,6 +430,7 @@ const AtmosTrackAuthCard: React.FC<LoginFormProps> = ({
 
                 <button
                   type="button"
+                  onClick={handleGoogleClick}
                   className="w-full flex items-center justify-center gap-2 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 bg-white hover:bg-gray-50 transition"
                 >
                   <Chrome className="w-4 h-4 text-orange-500" />
@@ -407,13 +465,12 @@ const AtmosTrackAuthCard: React.FC<LoginFormProps> = ({
                   </button>
 
                   <h3 className="text-lg font-semibold text-gray-900 mb-1">
-                    Forgot your password, but not your dreams?
+                    Password failed its vibe check and left the chat? Summon a new one.
                   </h3>
                   <p className="text-xs text-gray-500 mb-4">
                     We emailed a 6‑digit code to{' '}
-                    <span className="font-medium">{form.email}</span>. Paste it
-                    below, set a new password, and you&apos;re back to hacking
-                    the atmosphere.
+                    <span className='font-medium'>{form.email}</span>.
+                      Drop it in, set a new password, and get back to bullying the atmosphere data like nothing happened.
                   </p>
 
                   <form onSubmit={handleResetSubmit} className="space-y-3">

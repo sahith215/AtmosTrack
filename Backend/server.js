@@ -17,6 +17,7 @@ import User from './models/User.js';
 import Verification from './models/Verification.js';
 import nodemailer from 'nodemailer';
 import PasswordReset from './models/PasswordReset.js';
+import { OAuth2Client } from 'google-auth-library';
 
 
 
@@ -68,6 +69,7 @@ app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || 'atmostrack_dev_secret_change_me';
 
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 let latestSensorData = null;
 let sensorHistory = [];
@@ -208,7 +210,6 @@ app.post('/api/auth/reset-password-with-code', async (req, res) => {
 });
 
 
-
 // Signup
 app.post('/api/auth/signup', async (req, res) => {
   try {
@@ -318,6 +319,89 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// Google sign-in: verify access token and issue our JWT
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const { accessToken } = req.body;
+    if (!accessToken) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'accessToken is required' });
+    }
+
+    // Ask Google who this token belongs to
+    const googleRes = await fetch(
+      'https://www.googleapis.com/oauth2/v3/userinfo',
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
+    );
+
+    if (!googleRes.ok) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'Invalid Google access token' });
+    }
+
+    const payload = await googleRes.json();
+    if (!payload || !payload.email) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'Invalid Google profile' });
+    }
+
+    const email = String(payload.email).toLowerCase();
+    const name = payload.name || email.split('@')[0];
+
+    let user = await User.findOne({ email });
+    if (!user) {
+      user = await User.create({
+        name,
+        email,
+        passwordHash: '',
+        role: 'viewer',
+        emailVerified: payload.email_verified ?? true,
+        lastLogin: new Date(),
+      });
+    } else {
+      user.lastLogin = new Date();
+      if (payload.email_verified) user.emailVerified = true;
+      await user.save();
+    }
+
+    const token = jwt.sign(
+      {
+        id: user._id.toString(),
+        email: user.email,
+        role: user.role,
+        emailVerified: user.emailVerified,
+      },
+      JWT_SECRET,
+      { expiresIn: '7d' },
+    );
+
+    return res.json({
+      ok: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        emailVerified: user.emailVerified,
+        lastLogin: user.lastLogin,
+      },
+      token,
+    });
+  } catch (err) {
+    console.error('Error in /api/auth/google:', err);
+    return res
+      .status(500)
+      .json({ ok: false, error: 'Google sign‑in failed' });
+  }
+});
+
+
+
 // Forgot password (request reset code)
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
@@ -344,13 +428,17 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
 
+    // NEW: secure random token (for link-based reset, logs, etc.)
+    const token = crypto.randomBytes(32).toString('hex');
+
     // 2) Remove any existing reset codes for this user
     await PasswordReset.deleteMany({ userId: user._id });
 
-    // 3) Store new code
+    // 3) Store new code + token
     await PasswordReset.create({
       userId: user._id,
       code,
+      token,       // <── important change
       expiresAt,
     });
 

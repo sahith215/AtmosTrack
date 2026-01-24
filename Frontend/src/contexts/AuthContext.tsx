@@ -1,13 +1,12 @@
-import React,
-  {
-    createContext,
-    useContext,
-    useState,
-    useEffect,
-    ReactNode,
-    Dispatch,
-    SetStateAction,
-  } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+  Dispatch,
+  SetStateAction,
+} from 'react';
 
 type Role = 'admin' | 'operator' | 'viewer';
 
