@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import { ZoomIn, ZoomOut, RotateCcw, Layers, X } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { useRealtime } from '../contexts/RealtimeContext';
 
 // Fix for default markers
 delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl;
@@ -259,74 +260,64 @@ const CustomMarker: React.FC<{ location: Location; onClick: (l: Location) => voi
   );
 };
 
+const convertRawToAQI = (rawValue: number | null): number => {
+  if (!rawValue && rawValue !== 0) return 75;
+  const aqi = Math.floor((rawValue / 4095) * 500);
+  return Math.max(0, Math.min(500, aqi));
+};
+
+const convertToHealthScore = (aqi: number): number => {
+  if (aqi <= 50) return 90;
+  if (aqi <= 100) return 75;
+  if (aqi <= 150) return 60;
+  return 45;
+};
+
+const getCO2FromData = (data: SensorData | null): number => {
+  if (!data || !data.co2) return 420;
+  return Math.round(data.co2.ppm);
+};
+
 const MapView: React.FC = () => {
   const [activeFilter, setActiveFilter] = useState('aqi');
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(null);
   const [showHeatMap, setShowHeatMap] = useState(true);
   const mapRef = useRef<L.Map | null>(null);
 
-  const [liveData, setLiveData] = useState<SensorData | null>(null);
-  const [isOnline, setIsOnline] = useState(false);
+  // ── Use the shared app-level WebSocket — NO separate socket created here ──
+  const { latestReading, status } = useRealtime();
+  const isOnline = status === 'connected';
 
-  const convertRawToAQI = (rawValue: number | null): number => {
-    if (!rawValue && rawValue !== 0) return 75;
-    const aqi = Math.floor((rawValue / 4095) * 500);
-    return Math.max(0, Math.min(500, aqi));
-  };
-
-  const convertToHealthScore = (aqi: number): number => {
-    if (aqi <= 50) return 90;
-    if (aqi <= 100) return 75;
-    if (aqi <= 150) return 60;
-    return 45;
-  };
-
-  const getCO2FromData = (data: SensorData | null): number => {
-    if (!data || !data.co2) return 420;
-    return Math.round(data.co2.ppm);
-  };
-
-  // Backend connection
-  useEffect(() => {
-    const socket =
-      (window as any).io &&
-      (window as any).io('http://localhost:5000', {
-        transports: ['websocket', 'polling'],
-      });
-
-    if (socket) {
-      socket.on('connect', () => {
-        console.log('🗺️ Map connected to backend');
-        setIsOnline(true);
-      });
-
-      socket.on('sensorUpdate', (data: SensorData) => {
-        setLiveData(data);
-      });
-
-      socket.on('disconnect', () => setIsOnline(false));
-    }
-
-    const fetchLatestData = async () => {
-      try {
-        const res = await fetch('http://localhost:5000/api/latest');
-        const json = await res.json();
-        if (json.success && json.data) {
-          setLiveData(json.data);
-          setIsOnline(json.isOnline);
-        }
-      } catch (e) {
-        console.error('Map: error fetching latest', e);
-        setIsOnline(false);
+  // Map the shared LiveReading type to the local SensorData shape
+  const liveData: SensorData | null = latestReading
+    ? {
+        deviceId: latestReading.deviceId,
+        environment: {
+          temperature: (latestReading as any).environment?.temperature ?? null,
+          humidity: (latestReading as any).environment?.humidity ?? null,
+        },
+        imu: {
+          ax: (latestReading as any).imu?.ax ?? null,
+          ay: (latestReading as any).imu?.ay ?? null,
+          az: (latestReading as any).imu?.az ?? null,
+          gx: (latestReading as any).imu?.gx ?? null,
+          gy: (latestReading as any).imu?.gy ?? null,
+          gz: (latestReading as any).imu?.gz ?? null,
+        },
+        location: {
+          lat: (latestReading as any).location?.lat ?? null,
+          lng: (latestReading as any).location?.lng ?? null,
+          speed: (latestReading as any).location?.speed ?? null,
+        },
+        purification: { on: (latestReading as any).purification?.on ?? false },
+        co2: (latestReading as any).co2 ?? null,
+        mq135: {
+          raw: (latestReading as any).mq135?.raw ?? null,
+          volt: (latestReading as any).mq135?.volt ?? null,
+        },
+        timestamp: latestReading.timestamp,
       }
-    };
-
-    fetchLatestData();
-
-    return () => {
-      if (socket) socket.disconnect();
-    };
-  }, []);
+    : null;
 
   const filters = [
     { id: 'aqi', label: 'AQI', color: 'bg-orange-500' },

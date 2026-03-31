@@ -4,6 +4,7 @@ import { Wallet, RefreshCw, ArrowRightCircle, Info, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import VerifyEmailModal from '../components/VerifyEmailModal';
+import { API_BASE } from '../config';
 
 type WalletState = {
   address: string | null;
@@ -28,7 +29,7 @@ type OffsetPlan = {
   offsetPercent: number;
 };
 
-const API_BASE = 'http://localhost:5000';
+// const API_BASE = 'http://localhost:5000'; // Removed local override - it's already imported
 
 // helper: always return today in local time as YYYY-MM-DD
 const todayISO = () => {
@@ -57,6 +58,8 @@ const CarbonDashboard: React.FC = () => {
   const [showVerifyModal, setShowVerifyModal] = useState(false);
 
   const { user, token } = useAuth();
+  console.log('carbon user emailVerified =', user?.emailVerified);
+
   const { showToast } = useToast();
 
   // --- My Impact aggregates (from all batches) ---
@@ -130,10 +133,13 @@ const CarbonDashboard: React.FC = () => {
     }
   };
 
+  // Re-fetch batches whenever emailVerified flips to true (e.g. after modal confirmation)
   useEffect(() => {
-    fetchBatches();
+    if (user?.emailVerified) {
+      fetchBatches();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [user?.emailVerified]);
 
   // CREATE BATCH
   const createDailyBatch = async () => {
@@ -208,8 +214,7 @@ const CarbonDashboard: React.FC = () => {
           prev.map((b) => (b.batchId === updated.batchId ? updated : b)),
         );
         setTxStatus(
-          `Simulated mint for batch ${updated.date} → status ${updated.status}${
-            updated.txHash ? ` (tx: ${updated.txHash})` : ''
+          `Simulated mint for batch ${updated.date} → status ${updated.status}${updated.txHash ? ` (tx: ${updated.txHash})` : ''
           }`,
         );
       } else if (res.data?.alreadyMinted) {
@@ -270,7 +275,8 @@ const CarbonDashboard: React.FC = () => {
         onClose={() => setShowVerifyModal(false)}
       />
 
-      <div className="pt-16 p-6 space-y-8 animate-fade-in min-h-screen bg-gradient-to-br from-cream-50 to-orange-50 relative">
+      <div className="pt-16 min-h-screen bg-gradient-to-br from-cream-50 via-orange-50/40 to-amber-50 animate-fade-in relative">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-0">
         {/* POPUP OVERLAY */}
         {showCreditsGuide && (
           <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -330,7 +336,7 @@ const CarbonDashboard: React.FC = () => {
                         small amount of Carbon Cleaning Tokens (CCT).
                       </p>
                       <p className="mt-2 text-xs text-gray-600">
-                        Tokens = DHI × 0.1   So a 4.95‑hour batch creates about
+                        Tokens = DHI × 0.1   So a 4.95‑hour batch creates about
                         0.49 CCT tokens.
                       </p>
                     </div>
@@ -344,7 +350,7 @@ const CarbonDashboard: React.FC = () => {
                         tonnes of CO₂e and choose how much you want to offset.
                       </p>
                       <p className="mt-2 text-xs text-gray-600">
-                        Required CCT = (Emissions in tCO₂e × Offset %) ÷ 100  
+                        Required CCT = (Emissions in tCO₂e × Offset %) ÷ 100
                         Example: 1 tCO₂e at 100% offset → 1.00 required CCT.
                       </p>
                     </div>
@@ -356,7 +362,7 @@ const CarbonDashboard: React.FC = () => {
                         4. This table = your daily batches
                       </h3>
                       <p>
-                        Every row in the “Credit Batches” table on the right is
+                        Every row in the "Credit Batches" table on the right is
                         one calendar day for a specific device. DHI shows how
                         long you had climate‑positive activity, and Tokens shows
                         how much CCT that day can mint.
@@ -375,12 +381,12 @@ const CarbonDashboard: React.FC = () => {
                         5. Retiring tokens = claiming the offset
                       </h3>
                       <p>
-                        When you “retire” CCT, those tokens are locked and can
+                        When you "retire" CCT, those tokens are locked and can
                         no longer be traded. In AtmosTrack, retirement is what
                         lets you claim an emissions offset for a given period.
                       </p>
                       <p className="mt-2 text-xs text-gray-600">
-                        In this demo, the “Retire tokens” button just simulates
+                        In this demo, the "Retire tokens" button just simulates
                         retirement for your connected Polygon wallet, so you can
                         try the UX without real on‑chain costs.
                       </p>
@@ -397,15 +403,15 @@ const CarbonDashboard: React.FC = () => {
                           emissions and offset %.
                         </li>
                         <li>
-                          Click “Compute DHI & Tokens” to generate or refresh
-                          that day’s batch.
+                          Click "Compute DHI &amp; Tokens" to generate or refresh
+                          that day's batch.
                         </li>
                         <li>
                           In Credit Batches, review DHI(h) and Tokens, then hit
-                          “Mint” to simulate CCT creation.
+                          "Mint" to simulate CCT creation.
                         </li>
                         <li>
-                          Finally, press “Retire tokens” once you have enough
+                          Finally, press "Retire tokens" once you have enough
                           CCT to cover your required amount.
                         </li>
                       </ol>
@@ -431,90 +437,85 @@ const CarbonDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-800 mb-3">
-            Carbon Credits & Tokenization
-          </h1>
-          <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-            Turn AtmosTrack’s real‑time impact into verifiable, tokenized carbon
-            credits that can be retired on‑chain.
-          </p>
+        {/* ── PAGE HEADER ─────────────────────────────────────────────── */}
+        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
+          <div>
+            <h1 className="text-3xl font-black text-gray-900 tracking-tight">
+              Carbon{' '}
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-500 to-amber-500">
+                Credits &amp; Tokenization
+              </span>
+            </h1>
+            <p className="text-sm text-gray-500 mt-1 max-w-xl">
+              Turn AtmosTrack's real-time impact into verifiable, tokenized carbon credits on-chain.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowCreditsGuide(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-amber-300 text-xs font-semibold border border-slate-700 hover:bg-slate-800 transition shrink-0"
+          >
+            <Info className="w-3.5 h-3.5" />
+            How Credits Work
+          </button>
         </div>
 
-        {/* Wallet status */}
-        <div className="max-w-4xl mx-auto mb-4">
-          <div className="bg-white/80 backdrop-blur-md rounded-2xl p-4 shadow-lg border border-cream-200 flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-xl bg-orange-500 flex items-center justify-center text-white shadow-md">
-                <Wallet className="w-5 h-5" />
+        {/* ── STATS + WALLET STRIP ─────────────────────────────────────── */}
+        <div className="max-w-6xl mx-auto mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-white/80 rounded-2xl border border-cream-200 p-4 text-center">
+              <div className="text-2xl font-black text-orange-600">{totalDhi.toFixed(1)}</div>
+              <div className="text-[11px] text-gray-500 mt-1 font-medium">Total DHI (hours)</div>
+            </div>
+            <div className="bg-white/80 rounded-2xl border border-cream-200 p-4 text-center">
+              <div className="text-2xl font-black text-emerald-600">{totalTokens.toFixed(2)}</div>
+              <div className="text-[11px] text-gray-500 mt-1 font-medium">CCT Tokens</div>
+            </div>
+            <div className="bg-white/80 rounded-2xl border border-cream-200 p-4 text-center">
+              <div className="text-2xl font-black text-purple-600">{mintedCount}</div>
+              <div className="text-[11px] text-gray-500 mt-1 font-medium">Batches Minted</div>
+            </div>
+            <div className="bg-white/80 rounded-2xl border border-amber-100 p-4 text-center">
+              <div className="text-2xl font-black text-amber-600">{pendingCount}</div>
+              <div className="text-[11px] text-gray-500 mt-1 font-medium">Pending Batches</div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── WALLET BAR ───────────────────────────────────────────────── */}
+        <div className="max-w-6xl mx-auto mb-6">
+          <div className="bg-white/80 backdrop-blur-md rounded-2xl p-4 shadow-sm border border-cream-200 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white shadow">
+                <Wallet className="w-4 h-4" />
               </div>
               <div>
-                <div className="text-sm font-semibold text-gray-800">
+                <div className="text-sm font-bold text-gray-800">
                   {wallet.address
-                    ? `Wallet: ${wallet.address.slice(
-                        0,
-                        6,
-                      )}...${wallet.address.slice(-4)}`
+                    ? `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`
                     : 'Wallet not connected'}
                 </div>
-                <div className="text-xs text-gray-500">
-                  Network: {wallet.chainId ?? '—'} (target: Polygon)
+                <div className="text-xs text-gray-400">
+                  Network: {wallet.chainId ?? '—'} &nbsp;·&nbsp; Target: Polygon
                 </div>
               </div>
             </div>
             <button
               onClick={connectWallet}
-              className="px-4 py-2 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-lg text-sm font-semibold shadow-md hover:shadow-lg hover:scale-[1.02] transition-all duration-200"
+              className="px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-xl text-xs font-bold shadow hover:shadow-md hover:scale-[1.02] transition-all"
             >
               {wallet.address ? 'Reconnect' : 'Connect MetaMask'}
             </button>
           </div>
         </div>
 
-        {/* Main layout: calculator + batches */}
-        <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Offset & batch calculator */}
-          <div className="space-y-6">
-            {/* My Impact summary card */}
-            <div className="bg-white/80 backdrop-blur-md rounded-2xl p-4 shadow-lg border border-cream-200 flex items-center justify-between">
-              <div>
-                <div className="text-xs uppercase tracking-wide text-gray-500">
-                  My Impact (all batches)
-                </div>
-                <div className="mt-1 text-sm text-gray-700">
-                  Total DHI:{' '}
-                  <span className="font-semibold">
-                    {totalDhi.toFixed(2)} h
-                  </span>{' '}
-                  • Tokens:{' '}
-                  <span className="font-semibold">
-                    {totalTokens.toFixed(2)} CCT
-                  </span>
-                </div>
-              </div>
-              <div className="text-right text-xs text-gray-500">
-                <div>
-                  Minted:{' '}
-                  <span className="font-semibold text-emerald-600">
-                    {mintedCount}
-                  </span>
-                </div>
-                <div>
-                  Pending:{' '}
-                  <span className="font-semibold text-amber-600">
-                    {pendingCount}
-                  </span>
-                </div>
-              </div>
-            </div>
+        {/* ── MAIN TWO-COLUMN LAYOUT ────────────────────────────────────── */}
+        <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-            <h2 className="text-2xl font-bold text-gray-800">
-              Offset Planner
-            </h2>
-
-            <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-cream-200 space-y-4">
-              <p className="text-sm text-gray-600 mb-2">
+          {/* LEFT: Offset Planner */}
+          <div className="flex flex-col gap-5">
+            <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-sm border border-cream-200 flex-1">
+              <h2 className="text-lg font-bold text-gray-900 mb-1">Offset Planner</h2>
+              <p className="text-xs text-gray-500 mb-5">
                 Use your measured emissions and choose how much to offset.
                 AtmosTrack converts this to CCT tokens and daily DHI batches.
               </p>
@@ -547,7 +548,7 @@ const CarbonDashboard: React.FC = () => {
               </div>
 
               {/* Emissions + offset % */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Emissions (tCO₂e)
@@ -582,7 +583,7 @@ const CarbonDashboard: React.FC = () => {
               </div>
 
               {/* Required tokens + actions */}
-              <div className="mt-2 bg-cream-50 border border-cream-200 rounded-xl p-4 flex items-center justify-between">
+              <div className="mt-4 bg-cream-50 border border-cream-200 rounded-xl p-4 flex items-center justify-between">
                 <div>
                   <div className="text-xs text-gray-500">
                     Required CCT tokens
@@ -596,7 +597,7 @@ const CarbonDashboard: React.FC = () => {
                   className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-lg text-sm font-semibold shadow-md hover:shadow-lg hover:scale-[1.02] transition-all duration-200 flex items-center gap-2"
                 >
                   <ArrowRightCircle className="w-4 h-4" />
-                  Compute DHI & Tokens
+                  Compute DHI &amp; Tokens
                 </button>
               </div>
 
@@ -612,25 +613,74 @@ const CarbonDashboard: React.FC = () => {
                   {txStatus}
                 </p>
               )}
+
+              {/* ── Offset Impact Panel ──────────────────────────────── */}
+              <div className="mt-5 space-y-3">
+
+                {/* Live tokens vs required progress */}
+                <div className="bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-100 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Tokens vs. Required</span>
+                    <span className="text-xs font-mono text-emerald-700">{totalTokens.toFixed(2)} / {requiredTokens()} CCT</span>
+                  </div>
+                  <div className="w-full bg-white/70 rounded-full h-2.5 overflow-hidden border border-emerald-100">
+                    <div
+                      className="h-2.5 rounded-full bg-gradient-to-r from-emerald-400 to-teal-500 transition-all duration-700"
+                      style={{ width: `${Math.min(100, (totalTokens / Math.max(0.01, parseFloat(requiredTokens()))) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-gray-500 mt-1.5">
+                    {totalTokens >= parseFloat(requiredTokens())
+                      ? '✅ You have enough CCT to cover this offset — ready to retire.'
+                      : `You need ${(parseFloat(requiredTokens()) - totalTokens).toFixed(2)} more CCT. Compute more DHI batches to close the gap.`}
+                  </p>
+                </div>
+
+                {/* Real-world CO₂ equivalencies */}
+                <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100 rounded-xl p-4">
+                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2.5">Real-world CO₂ equivalents</p>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-white/60 rounded-lg px-2 py-2">
+                      <div className="text-base font-black text-amber-600">
+                        {(offsetPlan.emissionsTonnes * (offsetPlan.offsetPercent / 100) * 4345).toFixed(0)}
+                      </div>
+                      <div className="text-[9px] text-gray-500 leading-tight mt-0.5">km not driven</div>
+                    </div>
+                    <div className="bg-white/60 rounded-lg px-2 py-2">
+                      <div className="text-base font-black text-green-600">
+                        {(offsetPlan.emissionsTonnes * (offsetPlan.offsetPercent / 100) * 45).toFixed(0)}
+                      </div>
+                      <div className="text-[9px] text-gray-500 leading-tight mt-0.5">trees for a year</div>
+                    </div>
+                    <div className="bg-white/60 rounded-lg px-2 py-2">
+                      <div className="text-base font-black text-blue-600">
+                        {(offsetPlan.emissionsTonnes * (offsetPlan.offsetPercent / 100) * 112).toFixed(0)}
+                      </div>
+                      <div className="text-[9px] text-gray-500 leading-tight mt-0.5">kg coal avoided</div>
+                    </div>
+                  </div>
+                  <p className="text-[9px] text-gray-400 mt-2 text-center">Based on EPA / IPCC standard conversion factors</p>
+                </div>
+
+                {/* Retirement vs. sale — compliance context */}
+                <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
+                  <p className="text-xs font-semibold text-gray-700 mb-1.5">Why retire instead of sell?</p>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    Selling CCT transfers the credit — the offset <em>moves</em> to the buyer. Retiring <strong>permanently locks</strong> the tokens to your account's emissions ledger, so your organisation can claim a verified net-zero statement for the period covered. Most sustainability audits and ESG frameworks (GHG Protocol, TCFD) require retirement proof, not just token ownership.
+                  </p>
+                </div>
+
+              </div>
             </div>
           </div>
 
-          {/* Batches panel */}
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-gray-800">
-              Credit Batches
-            </h2>
-
-            <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-cream-200">
-              <div className="flex items-center justify-between mb-3">
+          {/* RIGHT: Batches panel */}
+          <div className="flex flex-col gap-5">
+            <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-sm border border-cream-200 flex-1">
+              <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-800">
-                    Daily impact batches
-                  </h3>
-                  <p className="text-sm text-gray-500">
-                    Each batch groups Device‑Hours of Impact for a date and
-                    becomes a candidate for minting CCT tokens.
-                  </p>
+                  <h2 className="text-lg font-bold text-gray-900">Credit Batches</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">Daily DHI grouped by device</p>
                 </div>
                 <button
                   onClick={fetchBatches}
@@ -688,11 +738,10 @@ const CarbonDashboard: React.FC = () => {
                           </td>
                           <td className="py-2 px-3">
                             <span
-                              className={`px-3 py-1 rounded-full text-[11px] font-semibold ${
-                                b.status === 'MINTED'
-                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
-                              }`}
+                              className={`px-3 py-1 rounded-full text-[11px] font-semibold ${b.status === 'MINTED'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                }`}
                             >
                               {b.status}
                             </span>
@@ -706,11 +755,10 @@ const CarbonDashboard: React.FC = () => {
                             <button
                               disabled={b.status === 'MINTED'}
                               onClick={() => mintBatch(b)}
-                              className={`px-3 py-1 rounded-lg text-[11px] font-semibold border ${
-                                b.status === 'MINTED'
-                                  ? 'text-gray-400 border-gray-200 cursor-not-allowed'
-                                  : 'text-white bg-orange-500 border-orange-500 hover:bg-orange-600'
-                              }`}
+                              className={`px-3 py-1 rounded-lg text-[11px] font-semibold border ${b.status === 'MINTED'
+                                ? 'text-gray-400 border-gray-200 cursor-not-allowed'
+                                : 'text-white bg-orange-500 border-orange-500 hover:bg-orange-600'
+                                }`}
                             >
                               {b.status === 'MINTED' ? 'Minted' : 'Mint'}
                             </button>
@@ -723,8 +771,8 @@ const CarbonDashboard: React.FC = () => {
               )}
             </div>
 
-            {/* Education teaser card under batches */}
-            <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 rounded-2xl p-5 shadow-xl border border-slate-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            {/* Education teaser card */}
+            <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-5 border border-slate-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
                 <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-800/70 border border-slate-600 text-[11px] font-semibold text-slate-200 mb-2">
                   <Info className="w-3 h-3 text-amber-300" />
@@ -734,7 +782,7 @@ const CarbonDashboard: React.FC = () => {
                   Not sure what these batches and tokens mean?
                 </h3>
                 <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-md">
-                  Learn how AtmosTrack translates your device’s cleaning time
+                  Learn how AtmosTrack translates your device's cleaning time
                   into carbon credits and how to use DHI, tokens, and retirement
                   to plan real offsets.
                 </p>
@@ -748,8 +796,9 @@ const CarbonDashboard: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
-      </div>
+        </div>{/* end grid */}
+        </div>{/* end px-wrapper */}
+      </div>{/* end pt-16 */}
     </>
   );
 };

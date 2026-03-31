@@ -7,6 +7,7 @@ import React, {
 } from 'react';
 import type { LiveReading } from '../types/LiveReading';
 import { io, Socket } from 'socket.io-client';
+import { API_BASE } from '../config';
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -20,7 +21,7 @@ const RealtimeContext = createContext<RealtimeContextValue | undefined>(
 );
 
 // Socket.IO backend URL
-const IO_URL = 'http://localhost:5000';
+const IO_URL = API_BASE;
 const MAX_RETRIES = 5;
 
 export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({

@@ -33,20 +33,59 @@ export default {
         sans: ['Inter', 'system-ui', 'sans-serif'],
       },
       spacing: {
-        '18': '4.5rem',
-        '88': '22rem',
+        18: '4.5rem',
+        88: '22rem',
+      },
+      // NEW: spooky animations
+      keyframes: {
+        fadeIn: {
+          '0%': { opacity: '0', transform: 'translateY(4px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        slideUp: {
+          '0%': { opacity: '0', transform: 'translateY(12px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        scaleIn: {
+          '0%': { opacity: '0', transform: 'scale(0.96)' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
+        },
+        glitch: {
+          '0%,100%': { transform: 'translate(0,0)' },
+          '20%': { transform: 'translate(-2px,1px)' },
+          '40%': { transform: 'translate(2px,-1px)' },
+          '60%': { transform: 'translate(-1px,2px)' },
+          '80%': { transform: 'translate(1px,-2px)' },
+        },
+        scanlines: {
+          '0%': { backgroundPosition: '0 0' },
+          '100%': { backgroundPosition: '0 4px' },
+        },
+        flickerFast: {
+          '0%,19%,21%,23%,25%,54%,56%,100%': { opacity: '1' },
+          '20%,24%,55%': { opacity: '0.2' },
+        },
+        rain: {
+          '0%': { transform: 'translateY(-100%)' },
+          '100%': { transform: 'translateY(100%)' },
+        },
       },
       animation: {
         'fade-in': 'fadeIn 0.6s ease-out forwards',
         'slide-up': 'slideUp 0.4s ease-out forwards',
         'scale-in': 'scaleIn 0.3s ease-out forwards',
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        glitch: 'glitch 120ms infinite',
+        scanlines: 'scanlines 150ms linear infinite',
+        flickerFast: 'flickerFast 0.2s infinite',
+        rainSlow: 'rain 10s linear infinite',
+        rainFast: 'rain 4s linear infinite',
       },
       backdropBlur: {
         xs: '2px',
       },
       boxShadow: {
-        'glass': '0 8px 32px 0 rgba(31, 38, 135, 0.37)',
+        glass: '0 8px 32px 0 rgba(31, 38, 135, 0.37)',
         'glass-inset': 'inset 0 2px 4px 0 rgba(255, 255, 255, 0.06)',
       },
       borderRadius: {

@@ -2,45 +2,57 @@ import AtmosTrackAuthCard from '../components/AtmosTrackLogin';
 import Toast from '../components/Toast';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-
-const API_BASE = 'http://localhost:5000';
+import { API_BASE } from '../config';
 
 const AuthPage = () => {
   const { login } = useAuth();
   const { showToast } = useToast();
 
   const handleLogin = async (email: string, password: string) => {
-    const res = await fetch(`${API_BASE}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
+  const res = await fetch(`${API_BASE}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
 
-    if (res.status === 401) throw new Error('Incorrect password');
-    if (res.status === 404)
-      throw new Error('No account found for this email. Create one first.');
-    if (!res.ok) throw new Error('Login failed. Please try again.');
+  if (res.status === 401) throw new Error('Incorrect password');
+  if (res.status === 404)
+    throw new Error('No account found for this email. Create one first.');
+  if (!res.ok) throw new Error('Login failed. Please try again.');
 
-    const data = await res.json();
-    login(data.user, data.token);
-    showToast('Signed in successfully.', 'success');
+  const data = await res.json();
+
+  const normalizedUser = {
+    ...data.user,
+    role: data.user.role.toLowerCase(), // normalize once here
   };
 
-  const handleSignup = async (name: string, email: string, password: string) => {
-    const res = await fetch(`${API_BASE}/api/auth/signup`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, password }),
-    });
+  login(normalizedUser, data.token);
+  showToast('Signed in successfully.', 'success');
+};
 
-    if (!res.ok) {
-      throw new Error('Could not create account. Try another email.');
-    }
+ const handleSignup = async (name: string, email: string, password: string) => {
+  const res = await fetch(`${API_BASE}/api/auth/signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, email, password }),
+  });
 
-    const data = await res.json();
-    login(data.user, data.token);
-    showToast('Account created successfully.', 'success');
+  if (!res.ok) {
+    throw new Error('Could not create account. Try another email.');
+  }
+
+  const data = await res.json();
+
+  const normalizedUser = {
+    ...data.user,
+    role: data.user.role.toLowerCase(), // normalize here too
   };
+
+  login(normalizedUser, data.token);
+  showToast('Account created successfully.', 'success');
+};
+
 
   const handleForgotPassword = async (email: string) => {
     const res = await fetch(`${API_BASE}/api/auth/forgot-password`, {
@@ -83,6 +95,7 @@ const AuthPage = () => {
         onSignup={handleSignup}
         onForgotPassword={handleForgotPassword}
         onResetWithCode={handleResetWithCode}
+        setActiveView={() => {}}
       />
       <Toast />
     </>

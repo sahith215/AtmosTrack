@@ -120,3 +120,50 @@ button, a, input, select, textarea {
     backdrop-filter: blur(12px);
   }
 }
+
+.root-ritual-hell {
+  background: #000;
+  cursor: crosshair;           /* or 'none' + hover blobs later */
+  overflow: hidden;
+}
+
+/* When hovering links/buttons, show weird pointers */
+.root-ritual-hell a,
+.root-ritual-hell button,
+.root-ritual-hell [role="button"] {
+  cursor: not-allowed;
+}
+
+
+/* High‑frequency flicker + noise */
+@keyframes rr-flicker {
+  0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% { opacity: 1; }
+  20%, 24%, 55% { opacity: 0.1; }
+}
+
+@keyframes rr-tv {
+  0% { transform: translateY(0) skewX(0deg); }
+  20% { transform: translateY(-3px) skewX(2deg); }
+  40% { transform: translateY(2px) skewX(-3deg); }
+  60% { transform: translateY(-1px) skewX(1deg); }
+  80% { transform: translateY(3px) skewX(-2deg); }
+  100% { transform: translateY(0) skewX(0deg); }
+}
+
+@keyframes rr-strobe {
+  0%, 90% { filter: none; }
+  91%, 93%, 95%, 97%, 99% { filter: invert(1) hue-rotate(180deg); }
+  92%, 94%, 96%, 98%, 100% { filter: none; }
+}
+
+.animate-flickerFast {
+  animation: rr-flicker 0.2s infinite;
+}
+
+.animate-tvGlitch {
+  animation: rr-tv 0.1s infinite;
+}
+
+.animate-strobeHell {
+  animation: rr-strobe 0.5s infinite;
+}

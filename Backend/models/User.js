@@ -14,9 +14,21 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+    /**
+     * Bcrypt-hashed password. NOT required for OAuth users (authProvider: 'google').
+     */
     passwordHash: {
       type: String,
-      required: true, // store bcrypt hash here
+      required: false,
+      default: null,
+    },
+    /**
+     * How this account was created. 'email' = password-based, 'google' = OAuth.
+     */
+    authProvider: {
+      type: String,
+      enum: ['email', 'google'],
+      default: 'email',
     },
     role: {
       type: String,
@@ -31,9 +43,34 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    /**
+     * Incremented whenever role changes or account is force-logged-out.
+     * JWTs carrying a lower tokenVersion are immediately rejected.
+     */
+    tokenVersion: {
+      type: Number,
+      default: 0,
+    },
+    /**
+     * If false, the user is deactivated — all their JWTs are instantly invalidated.
+     */
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    bio: {
+      type: String,
+      default: '',
+      maxlength: 200,
+    },
   },
   { timestamps: true }
 );
+
+// Indexes for admin queries (role filter, verified filter)
+userSchema.index({ role: 1 });
+userSchema.index({ emailVerified: 1 });
+userSchema.index({ isActive: 1 });
 
 const User = mongoose.model('User', userSchema);
 

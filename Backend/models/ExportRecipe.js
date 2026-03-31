@@ -1,5 +1,6 @@
 // models/ExportRecipe.js
 import mongoose from 'mongoose';
+import crypto from 'crypto';
 
 const { Schema } = mongoose;
 
@@ -55,6 +56,17 @@ const ExportRecipeSchema = new Schema(
     },
 
     delivery: { type: DeliverySchema, default: () => ({}) },
+
+    /**
+     * Per-recipe secret token included in the runUrl query string.
+     * This secures the unauthenticated n8n automation endpoint without
+     * requiring a JWT (which n8n cannot easily provide on cron triggers).
+     */
+    accessToken: {
+      type: String,
+      required: true,
+      default: () => crypto.randomBytes(24).toString('hex'),
+    },
 
     createdAt: { type: Date, default: Date.now },
     lastRunAt: { type: Date, default: null },

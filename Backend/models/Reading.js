@@ -80,6 +80,18 @@ const ReadingSchema = new Schema(
     sourceClassification: { type: SourceClassificationSchema, required: true },
     emissions: { type: EmissionsSchema, required: true },
     meta: { type: MetaSchema },
+    // ── Blockchain integrity fields ──────────────────────────────────────────
+    // SHA-256 fingerprint of the immutable sensor payload (computed at ingest).
+    // If any field is later altered in MongoDB, re-hashing will NOT match this value.
+    dataHash: { type: String, index: true },
+    // Tracks on-chain anchoring lifecycle: PENDING → ANCHORED (Phase 2)
+    anchorStatus: {
+      type: String,
+      enum: ['PENDING', 'ANCHORED'],
+      default: 'PENDING',
+    },
+    // Will hold the Polygon transaction hash once Phase 2 is deployed
+    txHash: { type: String, default: null },
   },
   {
     timestamps: false,

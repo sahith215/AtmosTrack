@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import rateLimit from 'express-rate-limit';
 import { connectDB } from './db.js';
 
 
@@ -18,6 +19,7 @@ import Verification from './models/Verification.js';
 import nodemailer from 'nodemailer';
 import PasswordReset from './models/PasswordReset.js';
 import { OAuth2Client } from 'google-auth-library';
+import { anchorReading, isReady as anchorReady } from './services/anchorService.js';
 
 
 
@@ -42,24 +44,40 @@ const server = http.createServer(app);
 
 
 const io = new SocketIO(server, {
-  cors: {
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
-    methods: ['GET', 'POST'],
-    credentials: true,
-  },
+  cors: {
+    origin: true,
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+});
+io.on("connection", socket => {
+  console.log("socket connected", socket.id);
 });
 
 
+// ── CORS: restrict based on FRONTEND_URL for production
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'http://localhost:5173',
+  'http://localhost:5000'
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: [
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
-      'http://172.31.111.86:5173',
-    ],
+    origin: function (origin, callback) {
+      // allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
+        callback(null, true);
+      } else {
+        console.warn(`CORS blocked request from: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,
-    methods: ['GET', 'POST', 'OPTIONS'],
-  }),
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  })
 );
 
 
@@ -67,7 +85,13 @@ app.use(
 app.use(express.json());
 
 
-const JWT_SECRET = process.env.JWT_SECRET || 'atmostrack_dev_secret_change_me';
+// ── Security: crash on startup if JWT_SECRET is not set
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET env var is not set. Refusing to start.');
+  process.exit(1);
+}
+const JWT_SECRET = process.env.JWT_SECRET;
+const BCRYPT_ROUNDS = 12; // standardized across all password operations
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -103,13 +127,14 @@ const CreditBatch =
 const exportSubscriptionSchema = new mongoose.Schema(
   {
     email: { type: String, required: true, unique: true },
-    exports: {
-      co2Digest: { type: Boolean, default: true },
-      emissionsLedger: { type: Boolean, default: false },
-      sourceDebug: { type: Boolean, default: false },
-    },
-    runUrl: { type: String, required: true },
-  },
+     exports: {
+      co2Digest: { type: Boolean, default: true },
+      emissionsLedger: { type: Boolean, default: false },
+      sourceDebug: { type: Boolean, default: false },
+    },
+    runUrl: { type: String, required: true },
+    active: { type: Boolean, default: true },
+  },
   { timestamps: true },
 );
 
@@ -119,17 +144,52 @@ const ExportSubscription =
   mongoose.model('ExportSubscription', exportSubscriptionSchema);
 
 
+// ------------ Rate limiters (applied per-route) ------------
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Too many attempts. Please try again in 15 minutes.' },
+});
+
+const otpLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 3,
+  message: { ok: false, error: 'Too many OTP requests. Wait 1 minute.' },
+});
+
 // ------------ Auth helpers ------------
-function authenticateToken(req, res, next) {
+/**
+ * Validates JWT and checks tokenVersion + isActive against DB.
+ * Adds DB lookup to every authenticated request to support
+ * instant token invalidation on role changes or account deactivation.
+ */
+async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
   if (!token) return res.status(401).json({ ok: false, error: 'No token provided' });
 
-  jwt.verify(token, JWT_SECRET, (err, decoded) => {
-    if (err) return res.status(403).json({ ok: false, error: 'Invalid token' });
-    req.user = decoded;
-    next();
-  });
+  let decoded;
+  try {
+    decoded = jwt.verify(token, JWT_SECRET);
+  } catch {
+    return res.status(403).json({ ok: false, error: 'Invalid or expired token' });
+  }
+
+  try {
+    const dbUser = await User.findById(decoded.id).select('tokenVersion isActive').lean();
+    if (!dbUser) return res.status(401).json({ ok: false, error: 'Account not found' });
+    if (!dbUser.isActive) return res.status(403).json({ ok: false, error: 'Account deactivated' });
+    if (dbUser.tokenVersion !== decoded.tokenVersion) {
+      return res.status(401).json({ ok: false, error: 'Session expired — please log in again' });
+    }
+  } catch {
+    return res.status(500).json({ ok: false, error: 'Auth check failed' });
+  }
+
+  req.user = decoded;
+  next();
 }
 
 function requireAdmin(req, res, next) {
@@ -139,23 +199,61 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function requireRole(roles) {
+  return (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res
+        .status(403)
+        .json({ ok: false, error: 'Insufficient role' });
+    }
+    next();
+  };
+}
+
+
 function requireVerified(req, res, next) {
   if (!req.user) {
-    return res
-      .status(401)
-      .json({ ok: false, error: 'Login required' });
+    return res.status(401).json({ ok: false, error: 'Login required' });
   }
+  // Admins are always considered verified — no OTP gate needed
+  if (req.user.role === 'admin') return next();
   if (!req.user.emailVerified) {
-    return res
-      .status(403)
-      .json({ ok: false, error: 'Email verification required' });
+    return res.status(403).json({ ok: false, error: 'Email verification required' });
   }
   next();
 }
 
 // ------------ Auth routes ------------
+
+app.post('/api/auth/admin-verify', authenticateToken, async (req, res) => {
+  try {
+    const { pin } = req.body;
+
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ ok: false, error: 'Admin only' });
+    }
+
+    if (!pin) {
+      return res.status(400).json({ ok: false, error: 'PIN is required' });
+    }
+
+    if (pin !== process.env.ADMIN_PIN) {
+      return res.status(401).json({ ok: false, error: 'Invalid admin PIN' });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Error in /api/auth/admin-verify:', err);
+    return res
+      .status(500)
+      .json({ ok: false, error: 'Admin verification failed' });
+  }
+});
+
+
+
 // Reset password using 6‑digit code (no links)
-app.post('/api/auth/reset-password-with-code', async (req, res) => {
+app.post('/api/auth/reset-password-with-code', authLimiter, async (req, res) => {
   try {
     let { email, code, newPassword } = req.body;
 
@@ -168,10 +266,7 @@ app.post('/api/auth/reset-password-with-code', async (req, res) => {
     email = String(email).trim().toLowerCase();
     code = String(code).trim();
 
-    console.log('RESET BODY =>', { email, code });
-
     const user = await User.findOne({ email });
-    console.log('RESET USER =>', user && user._id);
 
     if (!user) {
       return res
@@ -180,7 +275,6 @@ app.post('/api/auth/reset-password-with-code', async (req, res) => {
     }
 
     const record = await PasswordReset.findOne({ userId: user._id, code });
-    console.log('RESET RECORD =>', record);
 
     if (!record) {
       return res
@@ -195,7 +289,7 @@ app.post('/api/auth/reset-password-with-code', async (req, res) => {
         .json({ ok: false, error: 'Code expired' });
     }
 
-    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
     user.passwordHash = passwordHash;
     await user.save();
     await PasswordReset.deleteMany({ userId: user._id });
@@ -211,9 +305,10 @@ app.post('/api/auth/reset-password-with-code', async (req, res) => {
 
 
 // Signup
-app.post('/api/auth/signup', async (req, res) => {
+app.post('/api/auth/signup', authLimiter, async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, role: rawRole } = req.body;
+
     if (!name || !email || !password) {
       return res
         .status(400)
@@ -222,18 +317,31 @@ app.post('/api/auth/signup', async (req, res) => {
 
     const existing = await User.findOne({ email });
     if (existing) {
-      return res.status(400).json({ ok: false, error: 'Email already registered' });
+      return res
+        .status(400)
+        .json({ ok: false, error: 'Email already registered' });
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+    const allowedRoles = ['viewer', 'operator'];
+    let role = allowedRoles.includes(rawRole) ? rawRole : 'viewer';
+
+    // extra safety: even if someone sends 'admin', force them to viewer
+    if (rawRole === 'admin') {
+      role = 'viewer';
+    }
 
     const user = await User.create({
       name,
       email,
       passwordHash,
-      role: 'viewer',
+      authProvider: 'email',
+      role,
       emailVerified: false,
       lastLogin: null,
+      tokenVersion: 0,
+      isActive: true,
     });
 
     const token = jwt.sign(
@@ -266,8 +374,9 @@ app.post('/api/auth/signup', async (req, res) => {
 });
 
 
+
 // Login
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -280,8 +389,13 @@ app.post('/api/auth/login', async (req, res) => {
     if (!user) {
       return res.status(404).json({ ok: false, error: 'USER_NOT_FOUND' });
     }
-
-    const match = await bcrypt.compare(password, user.passwordHash);
+    if (!user.isActive) {
+      return res.status(403).json({ ok: false, error: 'ACCOUNT_DEACTIVATED' });
+    }
+    if (user.authProvider === 'google') {
+      return res.status(400).json({ ok: false, error: 'This account uses Google sign-in. Please use the Google button.' });
+    }
+    const match = await bcrypt.compare(password, user.passwordHash ?? '');
     if (!match) {
       return res.status(401).json({ ok: false, error: 'WRONG_PASSWORD' });
     }
@@ -296,6 +410,7 @@ app.post('/api/auth/login', async (req, res) => {
         email: user.email,
         role: user.role,
         emailVerified: user.emailVerified,
+        tokenVersion: user.tokenVersion ?? 0,
       },
       JWT_SECRET,
       { expiresIn: '7d' },
@@ -320,7 +435,7 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Google sign-in: verify access token and issue our JWT
-app.post('/api/auth/google', async (req, res) => {
+app.post('/api/auth/google', authLimiter, async (req, res) => {
   try {
     const { accessToken } = req.body;
     if (!accessToken) {
@@ -358,12 +473,18 @@ app.post('/api/auth/google', async (req, res) => {
       user = await User.create({
         name,
         email,
-        passwordHash: '',
+        passwordHash: null,
+        authProvider: 'google',
         role: 'viewer',
         emailVerified: payload.email_verified ?? true,
         lastLogin: new Date(),
+        tokenVersion: 0,
+        isActive: true,
       });
     } else {
+      if (!user.isActive) {
+        return res.status(403).json({ ok: false, error: 'Account deactivated' });
+      }
       user.lastLogin = new Date();
       if (payload.email_verified) user.emailVerified = true;
       await user.save();
@@ -375,6 +496,7 @@ app.post('/api/auth/google', async (req, res) => {
         email: user.email,
         role: user.role,
         emailVerified: user.emailVerified,
+        tokenVersion: user.tokenVersion ?? 0,
       },
       JWT_SECRET,
       { expiresIn: '7d' },
@@ -403,7 +525,7 @@ app.post('/api/auth/google', async (req, res) => {
 
 
 // Forgot password (request reset code)
-app.post('/api/auth/forgot-password', async (req, res) => {
+app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
   try {
     const { email } = req.body;
 
@@ -474,7 +596,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 
 // Request email verification OTP
 
-app.post('/api/auth/request-verification', async (req, res) => {
+app.post('/api/auth/request-verification', otpLimiter, async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) {
@@ -484,6 +606,10 @@ app.post('/api/auth/request-verification', async (req, res) => {
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({ ok: false, error: 'User not found' });
+    }
+    // Short-circuit: already verified — no need to send another OTP
+    if (user.emailVerified) {
+      return res.json({ ok: true, message: 'Email already verified' });
     }
 
     // 6-digit code
@@ -592,6 +718,46 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
   }
 });
 
+// Refresh JWT so emailVerified / role stay in sync with DB
+app.post('/api/auth/refresh-token', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ ok: false, error: 'User not found' });
+    }
+
+    const token = jwt.sign(
+      {
+        id: user._id.toString(),
+        email: user.email,
+        role: user.role,
+        emailVerified: user.emailVerified,
+        tokenVersion: user.tokenVersion ?? 0,
+      },
+      JWT_SECRET,
+      { expiresIn: '7d' },
+    );
+
+    return res.json({
+      ok: true,
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        emailVerified: user.emailVerified,
+        lastLogin: user.lastLogin,
+      },
+    });
+  } catch (err) {
+    console.error('Error in /api/auth/refresh-token:', err);
+    return res
+      .status(500)
+      .json({ ok: false, error: 'Failed to refresh token' });
+  }
+});
+
 
 // ------------ Helpers ------------
 function adjustSourceClassification(sensorReading, modelResult) {
@@ -610,13 +776,18 @@ function adjustSourceClassification(sensorReading, modelResult) {
   const vibIsLow = vibAmp !== null && vibAmp < 3000;
 
 
-  if (aqiIsGood && co2IsLow && vibIsLow && modelResult.confidence < 70) {
-    return {
-      label: 'Clean',
-      confidence: 100,
-      modelAccuracy: modelResult.modelAccuracy,
-    };
-  }
+   if (aqiIsGood && co2IsLow && vibIsLow && modelResult.confidence < 70) {
+    // Heuristic override: sensor conditions clearly indicate clean air,
+    // but ML confidence was low. We adjust the label but flag the override
+    // with a lower confidence so audit logs remain honest.
+    return {
+      label: 'Clean',
+      confidence: 82,           // not 100 — reflects heuristic adjustment
+      overriddenByHeuristic: true,
+      originalConfidence: modelResult.confidence,
+      modelAccuracy: modelResult.modelAccuracy,
+    };
+  }
 
 
   return modelResult;
@@ -630,6 +801,248 @@ function getPath(obj, path) {
     return acc[key];
   }, obj);
 }
+
+// after helpers + /api/auth/me
+
+app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const [totalUsers, verifiedUsers, activeUsers, adminCount, operatorCount, viewerCount, totalReadings, anchoredReadings, pendingBatches] = await Promise.all([
+      User.countDocuments(),
+      User.countDocuments({ emailVerified: true }),
+      User.countDocuments({ isActive: true }),
+      User.countDocuments({ role: 'admin' }),
+      User.countDocuments({ role: 'operator' }),
+      User.countDocuments({ role: 'viewer' }),
+      Reading.countDocuments(),
+      Reading.countDocuments({ anchorStatus: 'ANCHORED' }),
+      CreditBatch.countDocuments({ status: 'PENDING' }),
+    ]);
+    const lockedUsers = totalUsers - activeUsers;
+    return res.json({
+      ok: true,
+      users: { total: totalUsers, verified: verifiedUsers, locked: lockedUsers, byRole: { admin: adminCount, operator: operatorCount, viewer: viewerCount } },
+      readings: { total: totalReadings, anchored: anchoredReadings },
+      carbon: { pendingBatches },
+    });
+  } catch (err) {
+    console.error('Error in /api/admin/stats:', err);
+    return res.status(500).json({ ok: false, error: 'Failed to fetch stats' });
+  }
+});
+
+// GET /api/readings/history — last N hours for time-series chart
+app.get('/api/readings/history', authenticateToken, async (req, res) => {
+  try {
+    const hours = Math.min(parseInt(req.query.hours ?? '24', 10), 72);
+    const deviceId = req.query.deviceId ?? 'ATMOSTRACK-01';
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+    const readings = await Reading.find(
+      { deviceId, timestamp: { $gte: since } },
+      { timestamp: 1, 'air.co2ppm': 1, 'air.aqi': 1, 'environment.temperature': 1, 'environment.humidity': 1 }
+    ).sort({ timestamp: 1 }).limit(500).lean();
+
+    const data = readings.map(r => ({
+      ts: new Date(r.timestamp).getTime(),
+      co2: r.air?.co2ppm ?? null,
+      aqi: r.air?.aqi ?? null,
+      temp: r.environment?.temperature ?? null,
+      humidity: r.environment?.humidity ?? null,
+    }));
+
+    return res.json({ ok: true, hours, deviceId, count: data.length, data });
+  } catch (err) {
+    console.error('Error in /api/readings/history:', err);
+    return res.status(500).json({ ok: false, error: 'Failed to fetch history' });
+  }
+});
+
+// GET /api/readings/:id/provenance — full data lineage for a reading
+app.get('/api/readings/:id/provenance', authenticateToken, async (req, res) => {
+  try {
+    const reading = await Reading.findById(req.params.id).lean();
+    if (!reading) return res.status(404).json({ ok: false, error: 'Reading not found' });
+
+    // Find if this reading belongs to any DHI batch (same deviceId, same day)
+    const readingDate = new Date(reading.timestamp).toISOString().slice(0, 10);
+    const batch = await CreditBatch.findOne({
+      deviceId: reading.deviceId,
+      date: readingDate,
+    }).lean();
+
+    // Re-verify hash integrity
+    const payloadToHash = {
+      deviceId: reading.deviceId,
+      sessionId: reading.sessionId,
+      timestamp: new Date(reading.timestamp).toISOString(),
+      location: reading.location,
+      environment: reading.environment,
+      air: reading.air,
+      aiFeatures: reading.aiFeatures,
+      emissions: reading.emissions,
+    };
+    const recomputedHash = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(payloadToHash, Object.keys(payloadToHash).sort()))
+      .digest('hex');
+    const intact = reading.dataHash ? recomputedHash === reading.dataHash : null;
+
+    return res.json({
+      ok: true,
+      provenance: {
+        readingId: reading._id,
+        deviceId: reading.deviceId,
+        timestamp: reading.timestamp,
+        ingestedAt: reading.timestamp,
+        integrity: {
+          storedHash: reading.dataHash ?? null,
+          recomputedHash,
+          intact,
+          verdict: intact === true ? 'INTACT' : intact === false ? 'TAMPERED' : 'NO_HASH',
+        },
+        blockchain: {
+          anchorStatus: reading.anchorStatus ?? 'PENDING',
+          txHash: reading.txHash ?? null,
+          network: 'Polygon Amoy',
+        },
+        carbonCredit: batch ? {
+          batchId: batch.batchId,
+          date: batch.date,
+          dhiHours: batch.dhiHours,
+          tokens: batch.tokens,
+          status: batch.status,
+          mintTxHash: batch.txHash ?? null,
+        } : null,
+        aiClassification: reading.sourceClassification ?? null,
+        emissions: reading.emissions ?? null,
+      },
+    });
+  } catch (err) {
+    console.error('Error in /api/readings/:id/provenance:', err);
+    return res.status(500).json({ ok: false, error: 'Provenance lookup failed' });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Profile Management Endpoints
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /api/auth/profile — returns full profile + stats
+app.get('/api/auth/profile', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).lean();
+    if (!user) return res.status(404).json({ ok: false, error: 'User not found' });
+
+    const readingCount = await Reading.countDocuments();
+    const anchoredCount = await Reading.countDocuments({ anchorStatus: 'ANCHORED' });
+
+    return res.json({
+      ok: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        emailVerified: user.emailVerified,
+        lastLogin: user.lastLogin,
+        createdAt: user.createdAt,
+        bio: user.bio ?? '',
+      },
+      stats: {
+        totalReadings: readingCount,
+        anchoredReadings: anchoredCount,
+        memberSince: user.createdAt,
+      },
+    });
+  } catch (err) {
+    console.error('Error in GET /api/auth/profile:', err);
+    return res.status(500).json({ ok: false, error: 'Server error' });
+  }
+});
+
+
+// PUT /api/auth/profile — update display name (+ optional bio)
+app.put('/api/auth/profile', authenticateToken, async (req, res) => {
+  try {
+    const { name, bio } = req.body;
+    if (!name || name.trim().length < 2) {
+      return res.status(400).json({ ok: false, error: 'Name must be at least 2 characters' });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { name: name.trim(), ...(bio !== undefined && { bio: bio.trim().slice(0, 200) }) },
+      { new: true }
+    );
+
+    // Issue fresh token so frontend session reflects new name immediately
+    const newToken = jwt.sign(
+      { id: user._id.toString(), email: user.email, role: user.role, emailVerified: user.emailVerified },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return res.json({
+      ok: true,
+      user: { id: user._id, name: user.name, email: user.email, role: user.role, emailVerified: user.emailVerified, lastLogin: user.lastLogin, bio: user.bio ?? '' },
+      token: newToken,
+    });
+  } catch (err) {
+    console.error('Error in PUT /api/auth/profile:', err);
+    return res.status(500).json({ ok: false, error: 'Update failed' });
+  }
+});
+
+
+// PUT /api/auth/change-password
+app.put('/api/auth/change-password', authenticateToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ ok: false, error: 'currentPassword and newPassword are required' });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ ok: false, error: 'New password must be at least 8 characters' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ ok: false, error: 'User not found' });
+
+    const match = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!match) return res.status(401).json({ ok: false, error: 'Current password is incorrect' });
+
+    user.passwordHash = await bcrypt.hash(newPassword, 12);
+    await user.save();
+
+    return res.json({ ok: true, message: 'Password updated successfully' });
+  } catch (err) {
+    console.error('Error in PUT /api/auth/change-password:', err);
+    return res.status(500).json({ ok: false, error: 'Password change failed' });
+  }
+});
+
+
+// DELETE /api/auth/account — permanently delete the account
+app.delete('/api/auth/account', authenticateToken, async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password) return res.status(400).json({ ok: false, error: 'Password required to confirm deletion' });
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ ok: false, error: 'User not found' });
+
+    const match = await bcrypt.compare(password, user.passwordHash);
+    if (!match) return res.status(401).json({ ok: false, error: 'Incorrect password' });
+
+    await User.findByIdAndDelete(req.user.id);
+    return res.json({ ok: true, message: 'Account permanently deleted' });
+  } catch (err) {
+    console.error('Error in DELETE /api/auth/account:', err);
+    return res.status(500).json({ ok: false, error: 'Deletion failed' });
+  }
+});
+
 
 // Show a simple page that sends user to the React reset page on port 5173
 app.get('/reset-password', (req, res) => {
@@ -729,7 +1142,7 @@ function buildExportFilter(query) {
 
 
 // ------------ Export endpoints (preview + CSV) ------------
-app.get('/api/exports/readings', async (req, res) => {
+app.get('/api/exports/readings', authenticateToken, requireVerified, async (req, res) => {
   try {
     const { filter, error } = buildExportFilter(req.query);
     if (error) {
@@ -766,7 +1179,7 @@ app.get('/api/exports/readings', async (req, res) => {
 });
 
 
-app.get('/api/exports/readings/csv', async (req, res) => {
+app.get('/api/exports/readings/csv', authenticateToken, requireVerified, async (req, res) => {
   try {
     const { filter, error } = buildExportFilter(req.query);
     if (error) {
@@ -924,6 +1337,52 @@ app.get('/api/exports/readings/csv', async (req, res) => {
 });
 
 
+// ------------ CSV helper (generates CSV string in-memory from a stored recipe) ------------
+async function generateRecipeCsv(recipe) {
+  const defaultColumns = [
+    'timestamp', 'deviceId', 'sessionId',
+    'location.context', 'location.lat', 'location.lng',
+    'location.altitude', 'location.speed',
+    'environment.temperature', 'environment.humidity',
+    'air.aqi', 'air.co2ppm', 'air.mq135Raw', 'air.mq135Volt',
+    'aiFeatures.vocAvg', 'aiFeatures.vocStd',
+    'aiFeatures.co2Avg', 'aiFeatures.co2Std',
+    'aiFeatures.vibrationAmp', 'aiFeatures.vibrationFreq', 'aiFeatures.Hour',
+    'sourceClassification.label', 'sourceClassification.confidence',
+    'emissions.estimatedCO2eqKg', 'emissions.method',
+    'meta.firmwareVersion', 'meta.gridRegion',
+  ];
+
+  const columns =
+    Array.isArray(recipe.fields) && recipe.fields.length > 0
+      ? recipe.fields
+      : defaultColumns;
+
+  const { filter } = buildExportFilter({
+    from: recipe.timeRange.from,
+    to: recipe.timeRange.to,
+    deviceId: recipe.deviceId,
+    context: recipe.context,
+  });
+
+  const docs = await Reading.find(filter).sort({ timestamp: 1 }).lean();
+
+  const rows = [columns.join(',')];
+  for (const doc of docs) {
+    const rowValues = columns.map((col) => {
+      if (col === 'timestamp') {
+        return doc.timestamp ? new Date(doc.timestamp).toISOString() : '';
+      }
+      const val = getPath(doc, col);
+      if (val === undefined || val === null) return '';
+      return String(val);
+    });
+    rows.push(rowValues.join(','));
+  }
+
+  return rows.join('\n');
+}
+
 // ------------ Export subscriptions ------------
 app.post(
   '/api/exports/subscription',
@@ -934,10 +1393,6 @@ app.post(
       const { email, exports, runUrl } = req.body;
 
       console.log('SUBSCRIPTION HIT with body =>', { email, exports, runUrl });
-      console.log(
-        'N8N_SUBSCRIPTION_WEBHOOK =>',
-        process.env.N8N_SUBSCRIPTION_WEBHOOK,
-      );
 
       if (!email || !runUrl) {
         return res
@@ -955,30 +1410,10 @@ app.post(
             sourceDebug: false,
           },
           runUrl,
+          active: true,
         },
         { upsert: true, new: true },
       );
-
-      const n8nWebhookUrl = process.env.N8N_SUBSCRIPTION_WEBHOOK;
-      if (n8nWebhookUrl) {
-        try {
-          console.log('CALLING N8N WEBHOOK =>', n8nWebhookUrl);
-          await axios.post(n8nWebhookUrl, {
-            email,
-            exports: subs.exports,
-            runUrl: subs.runUrl,
-          });
-          console.log('N8N WEBHOOK CALL OK');
-        } catch (e) {
-          console.error(
-            'Error calling n8n subscription webhook:',
-            e.response?.status,
-            e.response?.data || e.message,
-          );
-        }
-      } else {
-        console.error('N8N_SUBSCRIPTION_WEBHOOK is NOT set');
-      }
 
       return res.json({ ok: true, subscription: subs });
     } catch (err) {
@@ -987,13 +1422,146 @@ app.post(
         .status(500)
         .json({ ok: false, error: 'Subscription save error' });
     }
-  },
+  }
 );
+
+// ------------ Get Subscription ------------
+app.get(
+  '/api/exports/subscription',
+  authenticateToken,
+  requireVerified,
+  async (req, res) => {
+    try {
+      const email = req.user.email;
+      if (!email) return res.status(400).json({ ok: false, error: 'User email not found' });
+      const subs = await ExportSubscription.findOne({ email, active: true }).lean();
+      return res.json({ ok: true, active: !!subs, subscription: subs });
+    } catch (err) {
+      console.error('Error fetching subscription:', err);
+      return res.status(500).json({ ok: false, error: 'Failed to fetch subscription' });
+    }
+  }
+);
+
+// ------------ Cancel Subscription ------------
+app.delete(
+  '/api/exports/subscription',
+  authenticateToken,
+  requireVerified,
+  async (req, res) => {
+    try {
+      const email = req.user.email;
+      if (!email) {
+        return res.status(400).json({ ok: false, error: 'User email not found' });
+      }
+
+      const subs = await ExportSubscription.findOneAndUpdate(
+        { email },
+        { active: false },
+        { new: true }
+      );
+
+      if (!subs) {
+        return res.status(404).json({ ok: false, error: 'No active subscription found' });
+      }
+
+      return res.json({ ok: true, subscription: subs });
+    } catch (err) {
+      console.error('Error cancelling subscription:', err);
+      return res.status(500).json({ ok: false, error: 'Failed to cancel automation' });
+    }
+  }
+);
+
+// ------------ Run Scheduled Exports (n8n cron trigger) ------------
+app.post('/api/exports/run-scheduled', async (req, res) => {
+  try {
+    const subscriptions = await ExportSubscription.find({ active: true }).lean();
+    
+    // Respond immediately so n8n doesn't time out waiting for 10+ sequentially sent emails
+    res.json({ 
+      ok: true, 
+      message: `Triggered scheduled exports. Processing ${subscriptions.length} subscriptions in the background.` 
+    });
+
+    // Run the expensive generation & email delivery in the background
+    (async () => {
+      let processed = 0;
+      let sent = 0;
+
+      for (const subs of subscriptions) {
+        // Silently skip obviously fake or test emails to prevent bounced Gmail deliveries
+        if (
+          !subs.email || 
+          subs.email.toLowerCase() === 'example@gmail.com' || 
+          subs.email.toLowerCase().includes('test@') || 
+          subs.email.toLowerCase().includes('example.com')
+        ) {
+          console.log(`⚠️ Skipping invalid/test email address: ${subs.email}`);
+          continue;
+        }
+
+        processed++;
+        try {
+          const runUrl = subs.runUrl;
+          const recipeId = runUrl ? runUrl.split('/').filter(Boolean).at(-2) : null;
+          const recipe = recipeId ? await ExportRecipe.findOne({ recipeId }).lean() : null;
+
+          if (recipe) {
+            const csvContent = await generateRecipeCsv(recipe);
+            const filename = `atmostrack-${recipe.recipeId}-${new Date().toISOString().slice(0, 10)}.csv`;
+
+            await mailer.sendMail({
+              from: `"AtmosTrack Data" <${process.env.EMAIL_USER}>`,
+              to: subs.email,
+              subject: `📊 AtmosTrack Daily Export: ${recipe.name}`,
+              html: `
+                <div style="font-family: system-ui, sans-serif; padding: 16px; max-width: 560px;">
+                  <h2 style="color: #1e293b;">Your scheduled data export is ready</h2>
+                  <p>Recipe: <strong>${recipe.name}</strong></p>
+                  <p>The CSV file is attached to this email. Open it in Excel, Python (pandas), or any spreadsheet tool.</p>
+                  <p style="font-size: 12px; color: #64748b;">
+                    Time range: ${new Date(recipe.timeRange.from).toLocaleDateString()} –
+                    ${new Date(recipe.timeRange.to).toLocaleDateString()}<br/>
+                    Generated: ${new Date().toLocaleString()}
+                  </p>
+                  <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 16px 0;"/>
+                  <p style="font-size: 11px; color: #94a3b8;">AtmosTrack • Scheduled Automation</p>
+                </div>
+              `,
+              attachments: [
+                {
+                  filename,
+                  content: csvContent,
+                  contentType: 'text/csv',
+                },
+              ],
+            });
+
+            console.log(`📧 Scheduled CSV attachment sent to ${subs.email} (${filename})`);
+            sent++;
+          } else {
+            console.warn('Could not find recipe for runUrl:', runUrl);
+          }
+        } catch (mailErr) {
+          console.error('Error processing scheduled export for', subs.email, mailErr);
+        }
+      }
+      console.log(`✅ Background processing complete: processed ${processed}, sent ${sent}.`);
+    })();
+  } catch (err) {
+    console.error('Error in /api/exports/run-scheduled:', err);
+    if (!res.headersSent) {
+      return res.status(500).json({ ok: false, error: 'Scheduled run failed' });
+    }
+  }
+});
 
 
 // ------------ Export recipes ------------
 // create recipe
-app.post('/api/exports/recipe', async (req, res) => {
+app.post('/api/exports/recipe', authenticateToken,
+  requireVerified, async (req, res) => {
   try {
     const {
       name,
@@ -1024,6 +1592,8 @@ app.post('/api/exports/recipe', async (req, res) => {
         .digest('hex')
         .slice(0, 10);
 
+    const accessToken = crypto.randomBytes(32).toString('hex');
+
 
     const recipe = await ExportRecipe.findOneAndUpdate(
       { recipeId },
@@ -1038,19 +1608,19 @@ app.post('/api/exports/recipe', async (req, res) => {
         format,
         language,
         delivery,
+        accessToken,
       },
       { upsert: true, new: true },
     );
 
 
-    const baseUrl = process.env.PUBLIC_BASE_URL || 'http://172.31.111.86:5000';
+    const baseUrl = process.env.PUBLIC_BASE_URL || 'http://localhost:5000';
 
-
-    return res.json({
-      ok: true,
-      recipe,
-      runUrl: `${baseUrl}/api/exports/recipe/${recipe.recipeId}/run`,
-    });
+    return res.json({
+      ok: true,
+      recipe,
+      runUrl: `${baseUrl}/api/exports/recipe/${recipe.recipeId}/run?token=${recipe.accessToken}`,
+    });
   } catch (err) {
     console.error('Error in /api/exports/recipe:', err);
     return res
@@ -1061,7 +1631,10 @@ app.post('/api/exports/recipe', async (req, res) => {
 
 
 // run recipe: stream CSV based on stored config
+// Secured via per-recipe accessToken query param (n8n-compatible, no JWT required)
 app.get('/api/exports/recipe/:id/run', async (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.status(401).send('Unauthorized: token query param required');
   try {
     const { id } = req.params;
     const recipe = await ExportRecipe.findOne({ recipeId: id }).lean();
@@ -1070,6 +1643,7 @@ app.get('/api/exports/recipe/:id/run', async (req, res) => {
     if (!recipe) {
       return res.status(404).send('Recipe not found');
     }
+    if (recipe.accessToken !== token) return res.status(403).send('Forbidden: invalid token');
 
 
     const { timeRange, deviceId, context } = recipe;
@@ -1491,24 +2065,119 @@ app.post('/api/sensor-data', async (req, res) => {
             confidence: 0,
           },
       emissions: {
-        estimatedCO2eqKg,
-        method: 'model',
-      },
-      meta: {
-        firmwareVersion: '1.0.0',
-        gridRegion: 'IN-SOUTH',
-      },
-    };
+        estimatedCO2eqKg,
+        method: 'model',
+      },
+      meta: {
+        firmwareVersion: '1.0.0',
+        gridRegion: 'IN-SOUTH',
+      },
+    };
 
 
-    await Reading.create(readingDoc);
-    console.log('SAVED READING', { deviceId, timestamp });
-  } catch (err) {
-    console.error('Error saving Reading to MongoDB:', err.message);
-  }
+    // ── Blockchain integrity: compute SHA-256 fingerprint of the immutable payload ──
+    // We hash the canonical JSON of the sensor fields (sorted keys for determinism).
+    // Any post-save alteration to these values will cause verification to fail.
+    const payloadToHash = {
+      deviceId: readingDoc.deviceId,
+      sessionId: readingDoc.sessionId,
+      timestamp: readingDoc.timestamp.toISOString(),
+      location: readingDoc.location,
+      environment: readingDoc.environment,
+      air: readingDoc.air,
+      aiFeatures: readingDoc.aiFeatures,
+      emissions: readingDoc.emissions,
+    };
+    const dataHash = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(payloadToHash, Object.keys(payloadToHash).sort()))
+      .digest('hex');
+
+    readingDoc.dataHash = dataHash;
+    readingDoc.anchorStatus = 'PENDING';
+    readingDoc.txHash = null;
+
+    const savedReading = await Reading.create(readingDoc);
+    console.log(`✅ SAVED READING [${deviceId}] hash=${dataHash.slice(0, 16)}… anchorStatus=PENDING`);
+
+    // ── Blockchain anchoring (async / non-blocking) ──────────────────────────
+    // Fires after we already responded to the ESP32 — never delays sensor ingestion.
+    if (anchorReady()) {
+      setImmediate(async () => {
+        try {
+          const result = await anchorReading(savedReading._id.toString(), dataHash);
+          if (result?.txHash) {
+            await Reading.findByIdAndUpdate(savedReading._id, {
+              anchorStatus: 'ANCHORED',
+              txHash: result.txHash,
+            });
+            console.log(`⛓️  ANCHORED [${savedReading._id}] txHash=${result.txHash}`);
+          }
+        } catch (anchorErr) {
+          console.warn('⚠️  Background anchor failed (non-fatal):', anchorErr.message);
+        }
+      });
+    }
+  } catch (err) {
+    console.error('Error saving Reading to MongoDB:', err.message);
+  }
 
 
-  res.json({ success: true, data: sensorReading });
+  res.json({ success: true, data: sensorReading });
+});
+
+
+// ------------ Tamper-proof verification endpoint ------------
+// Re-hashes the stored reading and compares to the original dataHash.
+// If MongoDB data was altered, hashes will NOT match — tamper detected.
+app.get('/api/sensor-data/:id/verify', async (req, res) => {
+  try {
+    const reading = await Reading.findById(req.params.id).lean();
+    if (!reading) {
+      return res.status(404).json({ ok: false, error: 'Reading not found' });
+    }
+    if (!reading.dataHash) {
+      return res.status(400).json({ ok: false, error: 'This reading has no integrity hash (ingested before blockchain feature was added)' });
+    }
+
+    // Re-compute the same canonical hash
+    const payloadToHash = {
+      deviceId: reading.deviceId,
+      sessionId: reading.sessionId,
+      timestamp: new Date(reading.timestamp).toISOString(),
+      location: reading.location,
+      environment: reading.environment,
+      air: reading.air,
+      aiFeatures: reading.aiFeatures,
+      emissions: reading.emissions,
+    };
+    const recomputedHash = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(payloadToHash, Object.keys(payloadToHash).sort()))
+      .digest('hex');
+
+    const intact = recomputedHash === reading.dataHash;
+
+    console.log(`🔍 VERIFY [${reading._id}] intact=${intact} stored=${reading.dataHash.slice(0,16)}… recomputed=${recomputedHash.slice(0,16)}…`);
+
+    return res.json({
+      ok: true,
+      readingId: reading._id,
+      deviceId: reading.deviceId,
+      timestamp: reading.timestamp,
+      intact,
+      storedHash: reading.dataHash,
+      recomputedHash,
+      anchorStatus: reading.anchorStatus ?? 'PENDING',
+      txHash: reading.txHash ?? null,
+      verdict: intact
+        ? '✅ DATA INTACT — hash matches. No tampering detected.'
+        : '🚨 TAMPER DETECTED — stored data does not match original hash!',
+    });
+  } catch (err) {
+    console.error('Error in /api/sensor-data/:id/verify:', err);
+    return res.status(500).json({ ok: false, error: 'Verification failed' });
+  }
 });
 
 
@@ -1531,14 +2200,28 @@ app.post('/api/nodes/set-location', async (req, res) => {
     const ts = timestamp ? new Date(timestamp) : new Date();
 
 
-    if (latestSensorData && latestSensorData.deviceId === deviceId) {
-      latestSensorData.location = {
-        lat,
-        lng,
-        speed: latestSensorData.location?.speed ?? null,
-      };
-      io.emit('sensorUpdate', latestSensorData);
-    }
+    if (!latestSensorData) {
+      latestSensorData = {
+        deviceId,
+        timestamp: ts.toISOString(),
+        location: { lat, lng, speed: 0 },
+        environment: { temperature: 0, humidity: 0 },
+        imu: { ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: 0 },
+        co2: { ppm: 400, status: 'UNKNOWN', healthAdvice: 'Hardware Offline' },
+        mq135: { raw: 0, volt: 0 }
+      };
+    }
+
+    if (latestSensorData.deviceId === deviceId || !latestSensorData.deviceId) {
+      latestSensorData.location = {
+        lat,
+        lng,
+        speed: latestSensorData.location?.speed ?? null,
+      };
+      // Important to bump the timestamp so frontend knows it's "live"
+      latestSensorData.timestamp = ts.toISOString();
+      io.emit('sensorUpdate', latestSensorData);
+    }
 
 
     sensorHistory = sensorHistory.map((r) =>
@@ -1625,10 +2308,11 @@ async function computeDHIForDay({ deviceId, date }) {
 
 
   const readings = await Reading.find({
-    timestamp: { $gte: fromTs, $lte: toTs },
-  })
-    .sort({ timestamp: 1 })
-    .lean();
+    deviceId,
+    timestamp: { $gte: fromTs, $lte: toTs },
+  })
+    .sort({ timestamp: 1 })
+    .lean();
 
 
   console.log('DHI DEBUG', {
@@ -1801,7 +2485,7 @@ app.post(
 
 
 // list batches
-app.get('/api/carbon/batches', async (req, res) => {
+app.get('/api/carbon/batches', authenticateToken, requireVerified, async (req, res) => {
   try {
     const { deviceId } = req.query;
     const filter = deviceId ? { deviceId: String(deviceId) } : {};

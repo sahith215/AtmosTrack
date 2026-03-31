@@ -13,6 +13,7 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react';
+import { useRealtime } from '../contexts/RealtimeContext';
 
 // 🔥 Backend sensor data interface (matches Node backend)
 interface SensorData {
@@ -85,12 +86,25 @@ const HealthAlerts: React.FC = () => {
   // pinned for now – logic uses GPS to decide UI text
   const [selectedLocation] = useState('vizianagaram-live');
   const [isTransitioning, setIsTransitioning] = useState(false);
-
-  // 🔥 Real-time backend data states
-  const [liveData, setLiveData] = useState<SensorData | null>(null);
-  const [isOnline, setIsOnline] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [secondsUntilNext, setSecondsUntilNext] = useState<number>(5);
+
+  // ── Use shared app-level WebSocket — no separate socket created here ──
+  const { latestReading, status } = useRealtime();
+  const isOnline = status === 'connected';
+
+  // Map shared LiveReading → local SensorData shape
+  const liveData: SensorData | null = latestReading
+    ? (latestReading as unknown as SensorData)
+    : null;
+
+  // Update lastUpdate timestamp whenever a new reading arrives
+  useEffect(() => {
+    if (latestReading) {
+      setLastUpdate(new Date());
+      setSecondsUntilNext(5);
+    }
+  }, [latestReading]);
 
   const convertRawToAQI = (rawValue: number): number => {
     try {
@@ -204,79 +218,13 @@ const HealthAlerts: React.FC = () => {
     }
   };
 
-  // 🔥 Backend connection with 5-second timing
-  useEffect(() => {
-    let socket: any = null;
-
-    try {
-      import('socket.io-client')
-        .then((io) => {
-          socket = io.default('http://localhost:5000', {
-            transports: ['websocket', 'polling'],
-          });
-
-          socket.on('connect', () => {
-            console.log('🏥 Health Alerts connected to backend');
-            setIsOnline(true);
-          });
-
-          socket.on('sensorUpdate', (data: SensorData) => {
-            console.log('🏥 Health alert data updated:', data);
-            setLiveData(data);
-            setLastUpdate(new Date());
-            setSecondsUntilNext(5);
-          });
-
-          socket.on('disconnect', () => {
-            setIsOnline(false);
-          });
-        })
-        .catch(() => setIsOnline(false));
-
-      fetchLatestData().catch(console.error);
-    } catch (error) {
-      console.error('Health alerts connection error:', error);
-      setIsOnline(false);
-    }
-
-    return () => {
-      if (socket) socket.disconnect();
-    };
-  }, []);
-
-  const fetchLatestData = async () => {
-    try {
-      const response = await fetch('http://localhost:5000/api/latest');
-      const result = await response.json();
-
-      if (result.success && result.data) {
-        setLiveData(result.data as SensorData);
-        setIsOnline(result.isOnline);
-        setLastUpdate(new Date());
-        setSecondsUntilNext(5);
-      }
-    } catch (error) {
-      console.error('Health alerts: Error fetching data:', error);
-      setIsOnline(false);
-    }
-  };
-
-  // 🔥 Countdown timer
+  // ⏳ Countdown to next expected update (cosmetic only — real updates come from WebSocket)
   useEffect(() => {
     const timer = setInterval(() => {
-      setSecondsUntilNext((prev) => {
-        if (prev <= 1) {
-          if (isOnline) {
-            fetchLatestData();
-          }
-          return 5;
-        }
-        return prev - 1;
-      });
+      setSecondsUntilNext((prev) => (prev <= 1 ? 5 : prev - 1));
     }, 1000);
-
     return () => clearInterval(timer);
-  }, [isOnline]);
+  }, []);
 
   // 🔥 LIVE UPDATING: Location data with Vizianagaram and Jonnada
   const locationHealthData: Record<string, LocationHealthData> = {
@@ -295,8 +243,8 @@ const HealthAlerts: React.FC = () => {
         'LIVE ESP32 sensor monitoring - Real-time air quality data from hardware sensors',
       pollutantInfo:
         liveData &&
-        liveData.mq135.raw != null &&
-        liveData.mq135.volt != null
+          liveData.mq135.raw != null &&
+          liveData.mq135.volt != null
           ? `Live readings: Raw ADC ${liveData.mq135.raw}, Voltage: ${liveData.mq135.volt}V. Real-time MQ135 + MG811 sensor data with WHO/EPA compliant analysis.`
           : 'Waiting for live sensor data from ESP32 hardware...',
       icon: Activity,
@@ -319,15 +267,15 @@ const HealthAlerts: React.FC = () => {
       aqi:
         liveData && liveData.mq135.raw != null
           ? Math.max(
-              20,
-              convertRawToAQI(liveData.mq135.raw) +
-                Math.floor(Math.random() * 20 - 10)
-            )
+            20,
+            convertRawToAQI(liveData.mq135.raw) +
+            Math.floor(Math.random() * 20 - 10)
+          )
           : 68,
       co2:
         liveData && liveData.mq135.raw != null
           ? convertRawToCO2(liveData.mq135.raw) +
-            Math.floor(Math.random() * 50 - 25)
+          Math.floor(Math.random() * 50 - 25)
           : 395,
       description:
         '🔴 LIVE area monitoring - Correlated readings from main Vizianagaram sensor with local variations',
@@ -341,14 +289,14 @@ const HealthAlerts: React.FC = () => {
       ...getHealthProfile(
         liveData && liveData.mq135.raw != null
           ? Math.max(
-              20,
-              convertRawToAQI(liveData.mq135.raw) +
-                Math.floor(Math.random() * 20 - 10)
-            )
+            20,
+            convertRawToAQI(liveData.mq135.raw) +
+            Math.floor(Math.random() * 20 - 10)
+          )
           : 68,
         liveData && liveData.mq135.raw != null
           ? convertRawToCO2(liveData.mq135.raw) +
-            Math.floor(Math.random() * 50 - 25)
+          Math.floor(Math.random() * 50 - 25)
           : 395,
         true
       ),
@@ -560,16 +508,14 @@ const HealthAlerts: React.FC = () => {
             Real-time health recommendations with 5-second updates from your AtmosTrack device
           </p>
           <div
-            className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-medium ${
-              isOnline
-                ? 'bg-green-100 text-green-700'
-                : 'bg-red-100 text-red-700'
-            }`}
+            className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-medium ${isOnline
+              ? 'bg-green-100 text-green-700'
+              : 'bg-red-100 text-red-700'
+              }`}
           >
             <div
-              className={`w-2 h-2 rounded-full mr-2 ${
-                isOnline ? 'bg-green-500' : 'bg-red-500'
-              } animate-pulse`}
+              className={`w-2 h-2 rounded-full mr-2 ${isOnline ? 'bg-green-500' : 'bg-red-500'
+                } animate-pulse`}
             ></div>
             {isOnline ? (
               <Wifi className="h-4 w-4 mr-2" />
@@ -604,16 +550,14 @@ const HealthAlerts: React.FC = () => {
               </div>
 
               <div
-                className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border ${
-                  isIndoor
-                    ? 'bg-amber-50 text-amber-700 border-amber-200'
-                    : 'bg-green-50 text-green-700 border-green-200'
-                }`}
+                className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border ${isIndoor
+                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                  : 'bg-green-50 text-green-700 border-green-200'
+                  }`}
               >
                 <span
-                  className={`w-2 h-2 rounded-full mr-2 ${
-                    isIndoor ? 'bg-amber-400' : 'bg-green-400'
-                  } animate-pulse`}
+                  className={`w-2 h-2 rounded-full mr-2 ${isIndoor ? 'bg-amber-400' : 'bg-green-400'
+                    } animate-pulse`}
                 />
                 {isIndoor
                   ? 'Outdoor mode – location active'
@@ -621,14 +565,14 @@ const HealthAlerts: React.FC = () => {
               </div>
             </div>
 
-           {/* Row 2: name / indoor label + risk + live + time */}
+            {/* Row 2: name / indoor label + risk + live + time */}
             <div className="pt-4 border-t border-gray-200">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
                   <LocationIcon className="h-5 w-5 text-orange-500" />
                   <div className="flex flex-col">
                     <span className="font-semibold text-gray-800">
-                      {isIndoor ?  currentLocation.name : 'Indoor monitoring session'}
+                      {isIndoor ? currentLocation.name : 'Indoor monitoring session'}
                     </span>
                     <div className="flex items-center space-x-2 mt-1">
                       <span
@@ -674,7 +618,7 @@ const HealthAlerts: React.FC = () => {
 
 
       {/* Source Classifier Card */}
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-gray-200">
           <div className="flex items-center mb-4">
             <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-gradient-to-r from-indigo-500 to-purple-500">
@@ -757,11 +701,10 @@ const HealthAlerts: React.FC = () => {
       </div>
 
       {/* Environmental Analysis */}
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <div
-          className={`bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-gray-200 ${
-            currentLocation.isLive ? 'animate-pulse' : ''
-          }`}
+          className={`bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-gray-200 ${currentLocation.isLive ? 'animate-pulse' : ''
+            }`}
         >
           <div className="flex items-center mb-6">
             <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-gradient-to-r from-blue-400 to-blue-500">
@@ -821,9 +764,8 @@ const HealthAlerts: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Health Status */}
           <div
-            className={`bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-gray-200 hover:shadow-xl transition-all duration-300 ${
-              currentLocation.isLive ? 'animate-pulse' : ''
-            }`}
+            className={`bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-gray-200 hover:shadow-xl transition-all duration-300 ${currentLocation.isLive ? 'animate-pulse' : ''
+              }`}
           >
             <div className="flex items-center mb-6">
               <div
@@ -843,17 +785,16 @@ const HealthAlerts: React.FC = () => {
                   className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg"
                 >
                   <div
-                    className={`w-2 h-2 rounded-full mt-2 ${
-                      currentLocation.riskLevel === 'safe'
-                        ? 'bg-green-400'
-                        : currentLocation.riskLevel === 'moderate'
+                    className={`w-2 h-2 rounded-full mt-2 ${currentLocation.riskLevel === 'safe'
+                      ? 'bg-green-400'
+                      : currentLocation.riskLevel === 'moderate'
                         ? 'bg-orange-400'
                         : currentLocation.riskLevel === 'high'
-                        ? 'bg-red-400'
-                        : currentLocation.riskLevel === 'very_unhealthy'
-                        ? 'bg-red-500'
-                        : 'bg-purple-500'
-                    }`}
+                          ? 'bg-red-400'
+                          : currentLocation.riskLevel === 'very_unhealthy'
+                            ? 'bg-red-500'
+                            : 'bg-purple-500'
+                      }`}
                   ></div>
                   <p className="text-gray-700 text-sm leading-relaxed">
                     {recommendation}
@@ -882,9 +823,8 @@ const HealthAlerts: React.FC = () => {
 
           {/* Activity Recommendations */}
           <div
-            className={`bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-gray-200 hover:shadow-xl transition-all duration-300 ${
-              currentLocation.isLive ? 'animate-pulse' : ''
-            }`}
+            className={`bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-gray-200 hover:shadow-xl transition-all duration-300 ${currentLocation.isLive ? 'animate-pulse' : ''
+              }`}
           >
             <div className="flex items-center mb-6">
               <div
@@ -941,7 +881,7 @@ const HealthAlerts: React.FC = () => {
       </div>
 
       {/* Location-Specific Alert */}
-      
+
     </div>
   );
 };

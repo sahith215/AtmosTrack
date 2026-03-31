@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Wind, Menu, X } from 'lucide-react';
+import { Menu, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import logo from '../assets/logo.png'; // adjust if Navbar is in a subfolder
 
 interface NavbarProps {
   activeView: string;
@@ -11,19 +12,33 @@ const Navbar: React.FC<NavbarProps> = ({ activeView, setActiveView }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { user, logout } = useAuth();
 
-  const baseItems = [
-    { id: 'home', label: 'Home' },
+  // Role-based navigation — viewers have read-only access (no export)
+  const baseViewerItems = [
+    { id: 'home',      label: 'Home' },
     { id: 'dashboard', label: 'Dashboard' },
-    { id: 'map', label: 'Map View' },
-    { id: 'health', label: 'Health Alerts' },
-    { id: 'carbon', label: 'Carbon Hub' },
-    { id: 'export', label: 'Data Export' },
+    { id: 'map',       label: 'Map View' },
+    { id: 'health',    label: 'Health Alerts' },
+    { id: 'carbon',    label: 'Carbon Hub' },
   ];
 
-  const navItems =
-    user?.role === 'admin'
-      ? [...baseItems, { id: 'admin', label: 'Admin' }]
-      : baseItems;
+  const navItems: { id: string; label: string }[] = (() => {
+    const role = user?.role ?? 'viewer';
+    if (role === 'admin') {
+      return [
+        ...baseViewerItems,
+        { id: 'export', label: 'Data Export' },
+        { id: 'admin',  label: 'Admin' },
+      ];
+    }
+    if (role === 'operator') {
+      return [
+        ...baseViewerItems,
+        { id: 'export', label: 'Data Export' },
+      ];
+    }
+    // viewer — no export, no admin
+    return baseViewerItems;
+  })();
 
   const handleNavClick = (viewId: string) => {
     setActiveView(viewId);
@@ -41,14 +56,30 @@ const Navbar: React.FC<NavbarProps> = ({ activeView, setActiveView }) => {
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
           <div
-            className="flex items-center space-x-3 cursor-pointer"
-            onClick={() => handleNavClick('home')}
-          >
-            <div className="w-10 h-10 bg-gradient-to-br from-orange-400 to-orange-500 rounded-xl flex items-center justify-center shadow-lg transform hover:scale-105 transition-all duration-200">
-              <Wind className="h-5 w-5 text-white" />
-            </div>
-            <span className="text-2xl font-bold text-gray-800">AtmosTrack</span>
-          </div>
+  className="flex items-center space-x-3 cursor-pointer"
+  onClick={() => handleNavClick('home')}
+>
+  <div
+    className="
+      w-10 h-10
+      rounded-xl                      /* less round than 2xl */
+      border-2 border-orange-400      /* thick orange border */
+      overflow-hidden
+      bg-white                        /* neutral inside so logo colors show */
+      shadow-lg
+      transform hover:scale-105
+      transition-all duration-200
+    "
+  >
+    <img
+      src={logo}
+      alt="AtmosTrack logo"
+      className="w-full h-full object-cover"
+    />
+  </div>
+  <span className="text-2xl font-bold text-gray-800">AtmosTrack</span>
+</div>
+
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center space-x-1">

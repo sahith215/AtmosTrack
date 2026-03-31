@@ -29,7 +29,8 @@ const int GPS_TX = 17;     // ESP32 TX (to GPS RX)
 // ---- WiFi + backend ----
 const char* ssid      = "At07";
 const char* password  = "newDay23";
-const char* serverUrl = "http://172.31.111.86:5000/api/sensor-data";
+const char* serverUrl = "http://172.23.2.86:5000/api/sensor-data";
+
 
 unsigned long lastSend = 0;
 const unsigned long sendInterval = 5000;
