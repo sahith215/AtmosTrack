@@ -27,9 +27,11 @@ const int GPS_RX = 16;     // ESP32 RX (to GPS TX)
 const int GPS_TX = 17;     // ESP32 TX (to GPS RX)
 
 // ---- WiFi + backend ----
-const char* ssid      = "At07";
-const char* password  = "newDay23";
-const char* serverUrl = "http://172.23.2.86:5000/api/sensor-data";
+// ---- WiFi + backend (SET THESE LOCALLY BEFORE FLASHING) ----
+const char* ssid      = "YOUR_WIFI_SSID";
+const char* password  = "YOUR_WIFI_PASSWORD";
+// Point this to your live backend (e.g., https://atmostrack-api.up.railway.app/api/sensor-data)
+const char* serverUrl = "http://YOUR_PRODUCTION_BACKEND_IP_OR_URL/api/sensor-data";
 
 
 unsigned long lastSend = 0;
