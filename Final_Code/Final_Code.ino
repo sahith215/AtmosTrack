@@ -31,7 +31,7 @@ const int GPS_TX = 17;     // ESP32 TX (to GPS RX)
 const char* ssid      = "YOUR_WIFI_SSID";
 const char* password  = "YOUR_WIFI_PASSWORD";
 // Point this to your live backend (e.g., https://atmostrack-api.up.railway.app/api/sensor-data)
-const char* serverUrl = "http://YOUR_PRODUCTION_BACKEND_IP_OR_URL/api/sensor-data";
+const char* serverUrl = "https://atmostrack-backend.vercel.app/api/sensor-data";
 
 
 unsigned long lastSend = 0;
