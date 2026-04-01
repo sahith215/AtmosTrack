@@ -10,7 +10,7 @@ interface NavbarProps {
 
 const Navbar: React.FC<NavbarProps> = ({ activeView, setActiveView }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { user, logout } = useAuth();
+  const { user, logout, adminModeUnlocked } = useAuth();
 
   // Role-based navigation — viewers have read-only access (no export)
   const baseViewerItems = [
@@ -22,7 +22,7 @@ const Navbar: React.FC<NavbarProps> = ({ activeView, setActiveView }) => {
   ];
 
   const navItems: { id: string; label: string }[] = (() => {
-    const role = user?.role ?? 'viewer';
+    const role = user?.role ?? (adminModeUnlocked ? 'admin' : 'viewer');
     if (role === 'admin') {
       return [
         ...baseViewerItems,

@@ -8,17 +8,7 @@ import {
   SetStateAction,
 } from 'react';
 import { API_BASE } from '../config';
-
-type Role = 'admin' | 'operator' | 'viewer';
-
-export type AuthUser = {
-  id: string;
-  name: string;
-  email: string;
-  role: Role;
-  emailVerified: boolean;
-  lastLogin?: string;
-};
+import { Role, AuthUser } from '../types';
 
 
 type AuthContextType = {

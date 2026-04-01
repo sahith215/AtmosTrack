@@ -55,9 +55,11 @@ io.on("connection", socket => {
 });
 
 
-// ── CORS: restrict based on FRONTEND_URL for production
+//  CORS: restrict based on FRONTEND_URL for production
 const allowedOrigins = [
   process.env.FRONTEND_URL,
+  'https://atmostrack-frontend.vercel.app',
+  'https://atmostrack.vercel.app',
   'http://localhost:5173',
   'http://localhost:5000'
 ].filter(Boolean);
@@ -67,7 +69,7 @@ app.use(
     origin: function (origin, callback) {
       // allow requests with no origin (like mobile apps or curl requests)
       if (!origin) return callback(null, true);
-      
+
       if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
         callback(null, true);
       } else {
@@ -85,7 +87,7 @@ app.use(
 app.use(express.json());
 
 
-// ── Security: crash on startup if JWT_SECRET is not set
+//  Security: crash on startup if JWT_SECRET is not set
 if (!process.env.JWT_SECRET) {
   console.error('FATAL: JWT_SECRET env var is not set. Refusing to start.');
   process.exit(1);
@@ -105,29 +107,29 @@ let aiWindow = [];
 
 // ------------ CreditBatch model ------------
 const creditBatchSchema = new mongoose.Schema({
-  batchId: { type: String, unique: true },
-  deviceId: { type: String, required: true },
-  fromTs: { type: Date, required: true },
-  toTs: { type: Date, required: true },
-  date: { type: String, required: true },
-  dhiHours: { type: Number, required: true },
-  tokens: { type: Number, required: true },
-  aqiThreshold: { type: Number, default: 150 },
-  status: { type: String, enum: ['PENDING', 'MINTED'], default: 'PENDING' },
-  txHash: { type: String },
-  createdAt: { type: Date, default: Date.now },
+  batchId: { type: String, unique: true },
+  deviceId: { type: String, required: true },
+  fromTs: { type: Date, required: true },
+  toTs: { type: Date, required: true },
+  date: { type: String, required: true },
+  dhiHours: { type: Number, required: true },
+  tokens: { type: Number, required: true },
+  aqiThreshold: { type: Number, default: 150 },
+  status: { type: String, enum: ['PENDING', 'MINTED'], default: 'PENDING' },
+  txHash: { type: String },
+  createdAt: { type: Date, default: Date.now },
 });
 
 
 const CreditBatch =
-  mongoose.models.CreditBatch || mongoose.model('CreditBatch', creditBatchSchema);
+  mongoose.models.CreditBatch || mongoose.model('CreditBatch', creditBatchSchema);
 
 
 // ------------ ExportSubscription model ------------
 const exportSubscriptionSchema = new mongoose.Schema(
-  {
-    email: { type: String, required: true, unique: true },
-     exports: {
+  {
+    email: { type: String, required: true, unique: true },
+    exports: {
       co2Digest: { type: Boolean, default: true },
       emissionsLedger: { type: Boolean, default: false },
       sourceDebug: { type: Boolean, default: false },
@@ -135,13 +137,13 @@ const exportSubscriptionSchema = new mongoose.Schema(
     runUrl: { type: String, required: true },
     active: { type: Boolean, default: true },
   },
-  { timestamps: true },
+  { timestamps: true },
 );
 
 
 const ExportSubscription =
-  mongoose.models.ExportSubscription ||
-  mongoose.model('ExportSubscription', exportSubscriptionSchema);
+  mongoose.models.ExportSubscription ||
+  mongoose.model('ExportSubscription', exportSubscriptionSchema);
 
 
 // ------------ Rate limiters (applied per-route) ------------
@@ -181,8 +183,10 @@ async function authenticateToken(req, res, next) {
     const dbUser = await User.findById(decoded.id).select('tokenVersion isActive').lean();
     if (!dbUser) return res.status(401).json({ ok: false, error: 'Account not found' });
     if (!dbUser.isActive) return res.status(403).json({ ok: false, error: 'Account deactivated' });
-    if (dbUser.tokenVersion !== decoded.tokenVersion) {
-      return res.status(401).json({ ok: false, error: 'Session expired — please log in again' });
+    const dbVersion = dbUser.tokenVersion || 0;
+    const jwtVersion = decoded.tokenVersion || 0;
+    if (dbVersion !== jwtVersion) {
+      return res.status(401).json({ ok: false, error: 'Session expired, please log in again' });
     }
   } catch {
     return res.status(500).json({ ok: false, error: 'Auth check failed' });
@@ -215,7 +219,7 @@ function requireVerified(req, res, next) {
   if (!req.user) {
     return res.status(401).json({ ok: false, error: 'Login required' });
   }
-  // Admins are always considered verified — no OTP gate needed
+  // Admins are always considered verified  no OTP gate needed
   if (req.user.role === 'admin') return next();
   if (!req.user.emailVerified) {
     return res.status(403).json({ ok: false, error: 'Email verification required' });
@@ -252,7 +256,7 @@ app.post('/api/auth/admin-verify', authenticateToken, async (req, res) => {
 
 
 
-// Reset password using 6‑digit code (no links)
+// Reset password using 6digit code (no links)
 app.post('/api/auth/reset-password-with-code', authLimiter, async (req, res) => {
   try {
     let { email, code, newPassword } = req.body;
@@ -364,6 +368,7 @@ app.post('/api/auth/signup', authLimiter, async (req, res) => {
         role: user.role,
         emailVerified: user.emailVerified,
         lastLogin: user.lastLogin,
+        needsRoleSelection: user.needsRoleSelection || false,
       },
       token,
     });
@@ -411,6 +416,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         role: user.role,
         emailVerified: user.emailVerified,
         tokenVersion: user.tokenVersion ?? 0,
+        needsRoleSelection: user.needsRoleSelection || false,
       },
       JWT_SECRET,
       { expiresIn: '7d' },
@@ -425,6 +431,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         role: user.role,
         emailVerified: user.emailVerified,
         lastLogin: user.lastLogin,
+        needsRoleSelection: user.needsRoleSelection || false,
       },
       token,
     });
@@ -476,6 +483,7 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
         passwordHash: null,
         authProvider: 'google',
         role: 'viewer',
+        needsRoleSelection: true,
         emailVerified: payload.email_verified ?? true,
         lastLogin: new Date(),
         tokenVersion: 0,
@@ -497,6 +505,7 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
         role: user.role,
         emailVerified: user.emailVerified,
         tokenVersion: user.tokenVersion ?? 0,
+        needsRoleSelection: user.needsRoleSelection || false,
       },
       JWT_SECRET,
       { expiresIn: '7d' },
@@ -511,6 +520,7 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
         role: user.role,
         emailVerified: user.emailVerified,
         lastLogin: user.lastLogin,
+        needsRoleSelection: user.needsRoleSelection || false,
       },
       token,
     });
@@ -518,7 +528,7 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
     console.error('Error in /api/auth/google:', err);
     return res
       .status(500)
-      .json({ ok: false, error: 'Google sign‑in failed' });
+      .json({ ok: false, error: 'Google signin failed' });
   }
 });
 
@@ -560,7 +570,7 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
     await PasswordReset.create({
       userId: user._id,
       code,
-      token,       // <── important change
+      token,       // < important change
       expiresAt,
     });
 
@@ -573,9 +583,9 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
       html: `
         <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 16px;">
           <h2>Reset your AtmosTrack password</h2>
-          <p>Use this 6‑digit code to reset your password:</p>
+          <p>Use this 6digit code to reset your password:</p>
           <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${code}</p>
-          <p style="font-size: 12px; color: #666;">This code expires in 15 minutes. If you didn’t request this, you can safely ignore this email.</p>
+          <p style="font-size: 12px; color: #666;">This code expires in 15 minutes. If you didnt request this, you can safely ignore this email.</p>
         </div>
       `,
     });
@@ -607,7 +617,7 @@ app.post('/api/auth/request-verification', otpLimiter, async (req, res) => {
     if (!user) {
       return res.status(404).json({ ok: false, error: 'User not found' });
     }
-    // Short-circuit: already verified — no need to send another OTP
+    // Short-circuit: already verified  no need to send another OTP
     if (user.emailVerified) {
       return res.json({ ok: true, message: 'Email already verified' });
     }
@@ -636,13 +646,13 @@ app.post('/api/auth/request-verification', otpLimiter, async (req, res) => {
         html: `
           <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 16px;">
             <h2>Verify your AtmosTrack email</h2>
-            <p>Use this 6‑digit code to verify your account:</p>
+            <p>Use this 6digit code to verify your account:</p>
             <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${code}</p>
-            <p style="font-size: 12px; color: #666;">This code expires in 15 minutes. If you didn’t request this, you can safely ignore this email.</p>
+            <p style="font-size: 12px; color: #666;">This code expires in 15 minutes. If you didnt request this, you can safely ignore this email.</p>
           </div>
         `,
       });
-      console.log('📧 Verification email sent to', user.email);
+      console.log(' Verification email sent to', user.email);
     } catch (mailErr) {
       console.error('Error sending verification email:', mailErr);
       return res
@@ -708,14 +718,14 @@ app.post('/api/auth/verify-email', async (req, res) => {
 
 // Current user
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id).select('-passwordHash');
-    if (!user) return res.status(404).json({ ok: false, error: 'User not found' });
-    return res.json({ ok: true, user });
-  } catch (err) {
-    console.error('Error in /api/auth/me:', err);
-    return res.status(500).json({ ok: false, error: 'Failed to fetch user' });
-  }
+  try {
+    const user = await User.findById(req.user.id).select('-passwordHash');
+    if (!user) return res.status(404).json({ ok: false, error: 'User not found' });
+    return res.json({ ok: true, user });
+  } catch (err) {
+    console.error('Error in /api/auth/me:', err);
+    return res.status(500).json({ ok: false, error: 'Failed to fetch user' });
+  }
 });
 
 // Refresh JWT so emailVerified / role stay in sync with DB
@@ -733,6 +743,7 @@ app.post('/api/auth/refresh-token', authenticateToken, async (req, res) => {
         role: user.role,
         emailVerified: user.emailVerified,
         tokenVersion: user.tokenVersion ?? 0,
+        needsRoleSelection: user.needsRoleSelection || false,
       },
       JWT_SECRET,
       { expiresIn: '7d' },
@@ -748,6 +759,7 @@ app.post('/api/auth/refresh-token', authenticateToken, async (req, res) => {
         role: user.role,
         emailVerified: user.emailVerified,
         lastLogin: user.lastLogin,
+        needsRoleSelection: user.needsRoleSelection || false,
       },
     });
   } catch (err) {
@@ -759,30 +771,83 @@ app.post('/api/auth/refresh-token', authenticateToken, async (req, res) => {
 });
 
 
+
+// Onboarding: update role for new Google users
+app.put('/api/auth/update-role', authenticateToken, async (req, res) => {
+  try {
+    const { role } = req.body;
+    const allowedRoles = ['viewer', 'operator'];
+
+    if (!allowedRoles.includes(role)) {
+      return res.status(400).json({ ok: false, error: 'Invalid role selection' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ ok: false, error: 'User not found' });
+
+    user.role = role;
+    user.needsRoleSelection = false;
+    // ensure emailVerified is true for Google users if not already
+    if (user.authProvider === 'google') user.emailVerified = true;
+
+    await user.save();
+
+    const token = jwt.sign(
+      {
+        id: user._id.toString(),
+        email: user.email,
+        role: user.role,
+        emailVerified: user.emailVerified,
+        tokenVersion: user.tokenVersion ?? 0,
+        needsRoleSelection: false,
+      },
+      JWT_SECRET,
+      { expiresIn: '7d' },
+    );
+
+    return res.json({
+      ok: true,
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        emailVerified: user.emailVerified,
+        lastLogin: user.lastLogin,
+        needsRoleSelection: false,
+      },
+    });
+  } catch (err) {
+    console.error('Error in /api/auth/update-role:', err);
+    return res.status(500).json({ ok: false, error: 'Failed to update role' });
+  }
+});
+
 // ------------ Helpers ------------
 function adjustSourceClassification(sensorReading, modelResult) {
-  if (!modelResult || !sensorReading.co2 || !sensorReading.aiFeatures) {
-    return modelResult;
-  }
+  if (!modelResult || !sensorReading.co2 || !sensorReading.aiFeatures) {
+    return modelResult;
+  }
 
 
-  const status = sensorReading.co2.status;
-  const co2 = sensorReading.co2.ppm;
+  const status = sensorReading.co2.status;
+  const co2 = sensorReading.co2.ppm;
 
 
-  const aqiIsGood = status === 'OUTDOOR_FRESH' || status === 'GOOD';
-  const co2IsLow = co2 < 450;
-  const vibAmp = sensorReading.aiFeatures.Vibration_amp;
-  const vibIsLow = vibAmp !== null && vibAmp < 3000;
+  const aqiIsGood = status === 'OUTDOOR_FRESH' || status === 'GOOD';
+  const co2IsLow = co2 < 450;
+  const vibAmp = sensorReading.aiFeatures.Vibration_amp;
+  const vibIsLow = vibAmp !== null && vibAmp < 3000;
 
 
-   if (aqiIsGood && co2IsLow && vibIsLow && modelResult.confidence < 70) {
+  if (aqiIsGood && co2IsLow && vibIsLow && modelResult.confidence < 70) {
     // Heuristic override: sensor conditions clearly indicate clean air,
     // but ML confidence was low. We adjust the label but flag the override
     // with a lower confidence so audit logs remain honest.
     return {
       label: 'Clean',
-      confidence: 82,           // not 100 — reflects heuristic adjustment
+      confidence: 82,           // not 100  reflects heuristic adjustment
       overriddenByHeuristic: true,
       originalConfidence: modelResult.confidence,
       modelAccuracy: modelResult.modelAccuracy,
@@ -790,16 +855,16 @@ function adjustSourceClassification(sensorReading, modelResult) {
   }
 
 
-  return modelResult;
+  return modelResult;
 }
 
 
 // helper for dynamic field paths like "air.co2ppm"
 function getPath(obj, path) {
-  return path.split('.').reduce((acc, key) => {
-    if (acc == null) return undefined;
-    return acc[key];
-  }, obj);
+  return path.split('.').reduce((acc, key) => {
+    if (acc == null) return undefined;
+    return acc[key];
+  }, obj);
 }
 
 // after helpers + /api/auth/me
@@ -830,7 +895,218 @@ app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) =>
   }
 });
 
-// GET /api/readings/history — last N hours for time-series chart
+// GET /api/admin/users
+app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const users = await User.find({}).select('-passwordHash').sort({ createdAt: -1 }).lean();
+    return res.json({ ok: true, users });
+  } catch (err) {
+    console.error('Error in /api/admin/users:', err);
+    return res.status(500).json({ ok: false, error: 'Failed to fetch users' });
+  }
+});
+
+// PUT /api/admin/users/:id/role
+app.put('/api/admin/users/:id/role', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { role } = req.body;
+    const allowedRoles = ['admin', 'operator', 'viewer'];
+    if (!allowedRoles.includes(role)) {
+      return res.status(400).json({ ok: false, error: 'Invalid role' });
+    }
+
+    const { id } = req.params;
+
+    // Safety check: Prevent changing Root Admin role
+    const targetUser = await User.findById(id);
+    if (!targetUser) return res.status(404).json({ ok: false, error: 'User not found' });
+
+    // We shouldn't allow changing the own role or the root admin
+    if (targetUser.email === 'sahasahu092@gmail.com' && role !== 'admin') {
+      return res.status(403).json({ ok: false, error: 'Cannot demote the Root Admin' });
+    }
+
+    targetUser.role = role;
+    targetUser.tokenVersion = (targetUser.tokenVersion || 0) + 1; // Invalidate all active sessions
+    await targetUser.save();
+
+    return res.json({ ok: true, message: 'Role updated successfully', user: targetUser });
+  } catch (err) {
+    console.error('Error in /api/admin/users/:id/role:', err);
+    return res.status(500).json({ ok: false, error: 'Failed to update role' });
+  }
+});
+
+// PUT /api/admin/users/:id/status
+app.put('/api/admin/users/:id/status', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { isActive } = req.body;
+
+    const targetUser = await User.findById(req.params.id);
+    if (!targetUser) return res.status(404).json({ ok: false, error: 'User not found' });
+
+    // Prevent locking out root admin
+    if (targetUser.email === 'sahasahu092@gmail.com' && !isActive) {
+      return res.status(403).json({ ok: false, error: 'Cannot lock out the Root Admin' });
+    }
+
+    targetUser.isActive = Boolean(isActive);
+    if (!targetUser.isActive) {
+      targetUser.tokenVersion = (targetUser.tokenVersion || 0) + 1; // Kick immediately if locked
+    }
+    await targetUser.save();
+
+    return res.json({ ok: true, message: isActive ? 'Account unlocked' : 'Account locked', user: targetUser });
+  } catch (err) {
+    console.error('Error in /api/admin/users/:id/status:', err);
+    return res.status(500).json({ ok: false, error: 'Failed to update status' });
+  }
+});
+
+// POST /api/admin/users/:id/force-reset
+app.post('/api/admin/users/:id/force-reset', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const targetUser = await User.findById(req.params.id);
+    if (!targetUser) return res.status(404).json({ ok: false, error: 'User not found' });
+
+    // Check if it's an email auth (cannot reset google password naturally)
+    if (targetUser.authProvider === 'google') {
+      return res.status(400).json({ ok: false, error: 'Cannot reset password for Google Auth users' });
+    }
+
+    // Assign an impossible random password, making next login impossible without forced reset loop
+    const tempPass = crypto.randomBytes(16).toString('hex');
+    targetUser.passwordHash = await bcrypt.hash(tempPass, 12);
+    targetUser.tokenVersion = (targetUser.tokenVersion || 0) + 1; // kick user
+    await targetUser.save();
+
+    return res.json({ ok: true, message: 'Password reset enforced. Active sessions invalidated.' });
+  } catch (err) {
+    console.error('Error in /api/admin/users/:id/force-reset:', err);
+    return res.status(500).json({ ok: false, error: 'Failed to force reset' });
+  }
+});
+
+// GET /api/admin/ledger
+app.get('/api/admin/ledger', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const readings = await Reading.find({})
+      .select('deviceId timestamp dataHash anchorStatus sourceClassification air')
+      .sort({ timestamp: -1 })
+      .limit(30)
+      .lean();
+
+    // Fetch basic global stats for the hero section
+    const [totalTokensInfo, activeAnchors] = await Promise.all([
+      CreditBatch.aggregate([{ $group: { _id: null, total: { $sum: '$tokens' } } }]),
+      Reading.countDocuments({ anchorStatus: 'ANCHORED' })
+    ]);
+
+    const totalMinted = totalTokensInfo.length > 0 ? totalTokensInfo[0].total : 0;
+
+    return res.json({
+      ok: true,
+      ledger: readings,
+      stats: {
+        totalMinted,
+        activeAnchors
+      }
+    });
+  } catch (err) {
+    console.error('Error in /api/admin/ledger:', err);
+    return res.status(500).json({ ok: false, error: 'Failed to fetch ledger' });
+  }
+});
+
+// --- EXPORT RECIPE ADMIN ENDPOINTS ---
+
+// GET /api/admin/export-recipes
+app.get('/api/admin/export-recipes', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const recipes = await ExportRecipe.find({}).sort({ createdAt: -1 });
+    return res.json({ ok: true, recipes });
+  } catch (err) {
+    console.error('Error in GET /api/admin/export-recipes:', err);
+    return res.status(500).json({ ok: false, error: 'Failed to fetch recipes' });
+  }
+});
+
+// POST /api/admin/export-recipes
+app.post('/api/admin/export-recipes', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { name, questionText, deviceId, context, timeRange, fields, format, delivery } = req.body;
+    
+    const recipeId = `recipe-${crypto.randomBytes(4).toString('hex')}`;
+    const newRecipe = new ExportRecipe({
+      recipeId,
+      name,
+      questionText,
+      deviceId,
+      context,
+      timeRange,
+      fields,
+      format: format || 'csv',
+      delivery: delivery || {}
+    });
+
+    await newRecipe.save();
+    return res.json({ ok: true, recipe: newRecipe });
+  } catch (err) {
+    console.error('Error in POST /api/admin/export-recipes:', err);
+    return res.status(500).json({ ok: false, error: 'Failed to create recipe' });
+  }
+});
+
+// PUT /api/admin/export-recipes/:id
+app.put('/api/admin/export-recipes/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const update = req.body;
+    
+    const recipe = await ExportRecipe.findOneAndUpdate({ recipeId: id }, update, { new: true });
+    if (!recipe) return res.status(404).json({ ok: false, error: 'Recipe not found' });
+    
+    return res.json({ ok: true, recipe });
+  } catch (err) {
+    console.error('Error in PUT /api/admin/export-recipes:', err);
+    return res.status(500).json({ ok: false, error: 'Failed to update recipe' });
+  }
+});
+
+// DELETE /api/admin/export-recipes/:id
+app.delete('/api/admin/export-recipes/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await ExportRecipe.findOneAndDelete({ recipeId: id });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Error in DELETE /api/admin/export-recipes:', err);
+    return res.status(500).json({ ok: false, error: 'Failed to delete recipe' });
+  }
+});
+
+// POST /api/admin/export-recipes/:id/run
+app.post('/api/admin/export-recipes/:id/run', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const recipe = await ExportRecipe.findOne({ recipeId: id });
+    if (!recipe) return res.status(404).json({ ok: false, error: 'Recipe not found' });
+
+    recipe.lastRunAt = new Date();
+    recipe.runCount = (recipe.runCount || 0) + 1;
+    await recipe.save();
+
+    // In a real production system, this could also trigger an n8n webhook via axios.
+    // axios.post(process.env.N8N_WEBHOOK_URL, { recipeId: id, token: recipe.accessToken });
+
+    return res.json({ ok: true, lastRunAt: recipe.lastRunAt, runCount: recipe.runCount });
+  } catch (err) {
+    console.error('Error in POST /api/admin/export-recipes/:id/run:', err);
+    return res.status(500).json({ ok: false, error: 'Failed to trigger recipe run' });
+  }
+});
+
+// GET /api/readings/history  last N hours for time-series chart
 app.get('/api/readings/history', authenticateToken, async (req, res) => {
   try {
     const hours = Math.min(parseInt(req.query.hours ?? '24', 10), 72);
@@ -857,7 +1133,7 @@ app.get('/api/readings/history', authenticateToken, async (req, res) => {
   }
 });
 
-// GET /api/readings/:id/provenance — full data lineage for a reading
+// GET /api/readings/:id/provenance  full data lineage for a reading
 app.get('/api/readings/:id/provenance', authenticateToken, async (req, res) => {
   try {
     const reading = await Reading.findById(req.params.id).lean();
@@ -924,11 +1200,11 @@ app.get('/api/readings/:id/provenance', authenticateToken, async (req, res) => {
 });
 
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 // Profile Management Endpoints
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 
-// GET /api/auth/profile — returns full profile + stats
+// GET /api/auth/profile  returns full profile + stats
 app.get('/api/auth/profile', authenticateToken, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).lean();
@@ -946,6 +1222,7 @@ app.get('/api/auth/profile', authenticateToken, async (req, res) => {
         role: user.role,
         emailVerified: user.emailVerified,
         lastLogin: user.lastLogin,
+        needsRoleSelection: user.needsRoleSelection || false,
         createdAt: user.createdAt,
         bio: user.bio ?? '',
       },
@@ -962,7 +1239,7 @@ app.get('/api/auth/profile', authenticateToken, async (req, res) => {
 });
 
 
-// PUT /api/auth/profile — update display name (+ optional bio)
+// PUT /api/auth/profile  update display name (+ optional bio)
 app.put('/api/auth/profile', authenticateToken, async (req, res) => {
   try {
     const { name, bio } = req.body;
@@ -985,7 +1262,10 @@ app.put('/api/auth/profile', authenticateToken, async (req, res) => {
 
     return res.json({
       ok: true,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role, emailVerified: user.emailVerified, lastLogin: user.lastLogin, bio: user.bio ?? '' },
+      user: {
+        id: user._id, name: user.name, email: user.email, role: user.role, emailVerified: user.emailVerified, lastLogin: user.lastLogin,
+        needsRoleSelection: user.needsRoleSelection || false, bio: user.bio ?? ''
+      },
       token: newToken,
     });
   } catch (err) {
@@ -1023,7 +1303,7 @@ app.put('/api/auth/change-password', authenticateToken, async (req, res) => {
 });
 
 
-// DELETE /api/auth/account — permanently delete the account
+// DELETE /api/auth/account  permanently delete the account
 app.delete('/api/auth/account', authenticateToken, async (req, res) => {
   try {
     const { password } = req.body;
@@ -1042,7 +1322,6 @@ app.delete('/api/auth/account', authenticateToken, async (req, res) => {
     return res.status(500).json({ ok: false, error: 'Deletion failed' });
   }
 });
-
 
 // Show a simple page that sends user to the React reset page on port 5173
 app.get('/reset-password', (req, res) => {
@@ -1068,272 +1347,272 @@ app.get('/reset-password', (req, res) => {
 
 // ------------ Root ------------
 app.get('/', (req, res) => {
-  res.json({
-    message: '🌍 AtmosTrack Multi-Sensor Backend Running!',
-    version: '3.2.0 - Full Sensor Suite + Auth',
-    sensors: [
-      'DHT11 (Temp/Humidity)',
-      'MG811 (CO2)',
-      'MQ135 (Air Quality)',
-      'MPU6050 (IMU)',
-      'GPS',
-    ],
-    endpoints: {
-      auth: {
-        signup: '/api/auth/signup',
-        login: '/api/auth/login',
-        me: '/api/auth/me',
-      },
-      sensorData: '/api/sensor-data',
-      latest: '/api/latest',
-      health: '/api/health',
-      exportReadings: '/api/exports/readings',
-      exportReadingsCsv: '/api/exports/readings/csv',
-      exportRecipe: '/api/exports/recipe',
-      runRecipe: '/api/exports/recipe/:id/run',
-      creditBatch: '/api/carbon/credit-batch',
-      listBatches: '/api/carbon/batches',
-      setLocationFromPhone: '/api/nodes/set-location',
-    },
-  });
+  res.json({
+    message: ' AtmosTrack Multi-Sensor Backend Running!',
+    version: '3.2.0 - Full Sensor Suite + Auth',
+    sensors: [
+      'DHT11 (Temp/Humidity)',
+      'MG811 (CO2)',
+      'MQ135 (Air Quality)',
+      'MPU6050 (IMU)',
+      'GPS',
+    ],
+    endpoints: {
+      auth: {
+        signup: '/api/auth/signup',
+        login: '/api/auth/login',
+        me: '/api/auth/me',
+      },
+      sensorData: '/api/sensor-data',
+      latest: '/api/latest',
+      health: '/api/health',
+      exportReadings: '/api/exports/readings',
+      exportReadingsCsv: '/api/exports/readings/csv',
+      exportRecipe: '/api/exports/recipe',
+      runRecipe: '/api/exports/recipe/:id/run',
+      creditBatch: '/api/carbon/credit-batch',
+      listBatches: '/api/carbon/batches',
+      setLocationFromPhone: '/api/nodes/set-location',
+    },
+  });
 });
 
 
 // ------------ Export helpers ------------
 function buildExportFilter(query) {
-  const { from, to, deviceId, context = 'all' } = query;
+  const { from, to, deviceId, context = 'all' } = query;
 
 
-  if (!from || !to) {
-    return {
-      error: 'from and to query parameters are required (ISO timestamps)',
-    };
-  }
+  if (!from || !to) {
+    return {
+      error: 'from and to query parameters are required (ISO timestamps)',
+    };
+  }
 
 
-  const fromDate = new Date(String(from));
-  const toDate = new Date(String(to));
+  const fromDate = new Date(String(from));
+  const toDate = new Date(String(to));
 
 
-  if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
-    return { error: 'from and to must be valid ISO date strings' };
-  }
+  if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+    return { error: 'from and to must be valid ISO date strings' };
+  }
 
 
-  const filter = {
-    timestamp: { $gte: fromDate, $lte: toDate },
-  };
+  const filter = {
+    timestamp: { $gte: fromDate, $lte: toDate },
+  };
 
 
-  if (deviceId) {
-    filter.deviceId = String(deviceId);
-  }
+  if (deviceId) {
+    filter.deviceId = String(deviceId);
+  }
 
 
-  if (context === 'indoor') {
-    filter['location.context'] = 'indoor';
-  } else if (context === 'outdoor') {
-    filter['location.context'] = 'outdoor';
-  }
+  if (context === 'indoor') {
+    filter['location.context'] = 'indoor';
+  } else if (context === 'outdoor') {
+    filter['location.context'] = 'outdoor';
+  }
 
 
-  return { filter };
+  return { filter };
 }
 
 
 // ------------ Export endpoints (preview + CSV) ------------
 app.get('/api/exports/readings', authenticateToken, requireVerified, async (req, res) => {
-  try {
-    const { filter, error } = buildExportFilter(req.query);
-    if (error) {
-      return res.status(400).json({
-        ok: false,
-        error,
-        example:
-          '/api/exports/readings?from=2025-12-30T00:00:00.000Z&to=2025-12-31T00:00:00.000Z',
-      });
-    }
+  try {
+    const { filter, error } = buildExportFilter(req.query);
+    if (error) {
+      return res.status(400).json({
+        ok: false,
+        error,
+        example:
+          '/api/exports/readings?from=2025-12-30T00:00:00.000Z&to=2025-12-31T00:00:00.000Z',
+      });
+    }
 
 
-    const count = await Reading.countDocuments(filter);
-    const sample = await Reading.find(filter)
-      .sort({ timestamp: -1 })
-      .limit(3)
-      .lean();
+    const count = await Reading.countDocuments(filter);
+    const sample = await Reading.find(filter)
+      .sort({ timestamp: -1 })
+      .limit(3)
+      .lean();
 
 
-    console.log('🔍 Export filter:', JSON.stringify(filter));
-    console.log('🔍 Export count:', count);
+    console.log(' Export filter:', JSON.stringify(filter));
+    console.log(' Export count:', count);
 
 
-    return res.json({
-      ok: true,
-      filter,
-      totalMatches: count,
-      previewSample: sample,
-    });
-  } catch (err) {
-    console.error('Error in /api/exports/readings:', err);
-    return res.status(500).json({ ok: false, error: 'Internal export error' });
-  }
+    return res.json({
+      ok: true,
+      filter,
+      totalMatches: count,
+      previewSample: sample,
+    });
+  } catch (err) {
+    console.error('Error in /api/exports/readings:', err);
+    return res.status(500).json({ ok: false, error: 'Internal export error' });
+  }
 });
 
 
 app.get('/api/exports/readings/csv', authenticateToken, requireVerified, async (req, res) => {
-  try {
-    const { filter, error } = buildExportFilter(req.query);
-    if (error) {
-      return res.status(400).send(error);
-    }
+  try {
+    const { filter, error } = buildExportFilter(req.query);
+    if (error) {
+      return res.status(400).send(error);
+    }
 
 
-    const cursor = Reading.find(filter).sort({ timestamp: 1 }).cursor();
+    const cursor = Reading.find(filter).sort({ timestamp: 1 }).cursor();
 
 
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader(
-      'Content-Disposition',
-      'attachment; filename="atmostrack-readings.csv"',
-    );
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="atmostrack-readings.csv"',
+    );
 
 
-    const header =
-      [
-        'timestamp',
-        'deviceId',
-        'sessionId',
-        'context',
-        'lat',
-        'lng',
-        'altitude',
-        'speed',
-        'temperature',
-        'humidity',
-        'aqi',
-        'co2ppm',
-        'mq135Raw',
-        'mq135Volt',
-        'ai_vocAvg',
-        'ai_vocStd',
-        'ai_co2Avg',
-        'ai_co2Std',
-        'ai_vibrationAmp',
-        'ai_vibrationFreq',
-        'ai_hour',
-        'src_label',
-        'src_confidence',
-        'em_co2eqKg',
-        'em_method',
-        'meta_firmwareVersion',
-        'meta_gridRegion',
-      ].join(',') + '\n';
+    const header =
+      [
+        'timestamp',
+        'deviceId',
+        'sessionId',
+        'context',
+        'lat',
+        'lng',
+        'altitude',
+        'speed',
+        'temperature',
+        'humidity',
+        'aqi',
+        'co2ppm',
+        'mq135Raw',
+        'mq135Volt',
+        'ai_vocAvg',
+        'ai_vocStd',
+        'ai_co2Avg',
+        'ai_co2Std',
+        'ai_vibrationAmp',
+        'ai_vibrationFreq',
+        'ai_hour',
+        'src_label',
+        'src_confidence',
+        'em_co2eqKg',
+        'em_method',
+        'meta_firmwareVersion',
+        'meta_gridRegion',
+      ].join(',') + '\n';
 
 
-    res.write(header);
+    res.write(header);
 
 
-    cursor.on('data', (doc) => {
-      const ts = doc.timestamp ? new Date(doc.timestamp).toISOString() : '';
-      const deviceId = doc.deviceId ?? '';
-      const sessionId = doc.sessionId ?? '';
+    cursor.on('data', (doc) => {
+      const ts = doc.timestamp ? new Date(doc.timestamp).toISOString() : '';
+      const deviceId = doc.deviceId ?? '';
+      const sessionId = doc.sessionId ?? '';
 
 
-      const context = doc.location?.context ?? '';
-      const lat = doc.location?.lat ?? '';
-      const lng = doc.location?.lng ?? '';
-      const altitude = doc.location?.altitude ?? '';
-      const speed = doc.location?.speed ?? '';
+      const context = doc.location?.context ?? '';
+      const lat = doc.location?.lat ?? '';
+      const lng = doc.location?.lng ?? '';
+      const altitude = doc.location?.altitude ?? '';
+      const speed = doc.location?.speed ?? '';
 
 
-      const temp = doc.environment?.temperature ?? '';
-      const hum = doc.environment?.humidity ?? '';
+      const temp = doc.environment?.temperature ?? '';
+      const hum = doc.environment?.humidity ?? '';
 
 
-      const aqi = doc.air?.aqi ?? '';
-      const co2ppm = doc.air?.co2ppm ?? '';
-      const mq135Raw = doc.air?.mq135Raw ?? '';
-      const mq135Volt = doc.air?.mq135Volt ?? '';
+      const aqi = doc.air?.aqi ?? '';
+      const co2ppm = doc.air?.co2ppm ?? '';
+      const mq135Raw = doc.air?.mq135Raw ?? '';
+      const mq135Volt = doc.air?.mq135Volt ?? '';
 
 
-      const vocAvg = doc.aiFeatures?.vocAvg ?? '';
-      const vocStd = doc.aiFeatures?.vocStd ?? '';
-      const co2Avg = doc.aiFeatures?.co2Avg ?? '';
-      const co2Std = doc.aiFeatures?.co2Std ?? '';
-      const vibAmp = doc.aiFeatures?.vibrationAmp ?? '';
-      const vibFreq = doc.aiFeatures?.vibrationFreq ?? '';
-      const hour = doc.aiFeatures?.Hour ?? '';
+      const vocAvg = doc.aiFeatures?.vocAvg ?? '';
+      const vocStd = doc.aiFeatures?.vocStd ?? '';
+      const co2Avg = doc.aiFeatures?.co2Avg ?? '';
+      const co2Std = doc.aiFeatures?.co2Std ?? '';
+      const vibAmp = doc.aiFeatures?.vibrationAmp ?? '';
+      const vibFreq = doc.aiFeatures?.vibrationFreq ?? '';
+      const hour = doc.aiFeatures?.Hour ?? '';
 
 
-      const srcLabel = doc.sourceClassification?.label ?? '';
-      const srcConf = doc.sourceClassification?.confidence ?? '';
+      const srcLabel = doc.sourceClassification?.label ?? '';
+      const srcConf = doc.sourceClassification?.confidence ?? '';
 
 
-      const co2eq = doc.emissions?.estimatedCO2eqKg ?? '';
-      const emMethod = doc.emissions?.method ?? '';
+      const co2eq = doc.emissions?.estimatedCO2eqKg ?? '';
+      const emMethod = doc.emissions?.method ?? '';
 
 
-      const fw = doc.meta?.firmwareVersion ?? '';
-      const grid = doc.meta?.gridRegion ?? '';
+      const fw = doc.meta?.firmwareVersion ?? '';
+      const grid = doc.meta?.gridRegion ?? '';
 
 
-      const row = [
-        ts,
-        deviceId,
-        sessionId,
-        context,
-        lat,
-        lng,
-        altitude,
-        speed,
-        temp,
-        hum,
-        aqi,
-        co2ppm,
-        mq135Raw,
-        mq135Volt,
-        vocAvg,
-        vocStd,
-        co2Avg,
-        co2Std,
-        vibAmp,
-        vibFreq,
-        hour,
-        srcLabel,
-        srcConf,
-        co2eq,
-        emMethod,
-        fw,
-        grid,
-      ]
-        .map((val) => (val === '' ? '' : String(val)))
-        .join(',');
+      const row = [
+        ts,
+        deviceId,
+        sessionId,
+        context,
+        lat,
+        lng,
+        altitude,
+        speed,
+        temp,
+        hum,
+        aqi,
+        co2ppm,
+        mq135Raw,
+        mq135Volt,
+        vocAvg,
+        vocStd,
+        co2Avg,
+        co2Std,
+        vibAmp,
+        vibFreq,
+        hour,
+        srcLabel,
+        srcConf,
+        co2eq,
+        emMethod,
+        fw,
+        grid,
+      ]
+        .map((val) => (val === '' ? '' : String(val)))
+        .join(',');
 
 
-      res.write(row + '\n');
-    });
+      res.write(row + '\n');
+    });
 
 
-    cursor.on('end', () => {
-      res.end();
-    });
+    cursor.on('end', () => {
+      res.end();
+    });
 
 
-    cursor.on('error', (err) => {
-      console.error('CSV cursor error:', err);
-      if (!res.headersSent) {
-        res.status(500).send('Error generating CSV');
-      } else {
-        res.end();
-      }
-    });
-  } catch (err) {
-    console.error('Error in /api/exports/readings/csv:', err);
-    if (!res.headersSent) {
-      res.status(500).send('Internal CSV export error');
-    } else {
-      res.end();
-    }
-  }
+    cursor.on('error', (err) => {
+      console.error('CSV cursor error:', err);
+      if (!res.headersSent) {
+        res.status(500).send('Error generating CSV');
+      } else {
+        res.end();
+      }
+    });
+  } catch (err) {
+    console.error('Error in /api/exports/readings/csv:', err);
+    if (!res.headersSent) {
+      res.status(500).send('Internal CSV export error');
+    } else {
+      res.end();
+    }
+  }
 });
 
 
@@ -1477,11 +1756,11 @@ app.delete(
 app.post('/api/exports/run-scheduled', async (req, res) => {
   try {
     const subscriptions = await ExportSubscription.find({ active: true }).lean();
-    
+
     // Respond immediately so n8n doesn't time out waiting for 10+ sequentially sent emails
-    res.json({ 
-      ok: true, 
-      message: `Triggered scheduled exports. Processing ${subscriptions.length} subscriptions in the background.` 
+    res.json({
+      ok: true,
+      message: `Triggered scheduled exports. Processing ${subscriptions.length} subscriptions in the background.`
     });
 
     // Run the expensive generation & email delivery in the background
@@ -1492,12 +1771,12 @@ app.post('/api/exports/run-scheduled', async (req, res) => {
       for (const subs of subscriptions) {
         // Silently skip obviously fake or test emails to prevent bounced Gmail deliveries
         if (
-          !subs.email || 
-          subs.email.toLowerCase() === 'example@gmail.com' || 
-          subs.email.toLowerCase().includes('test@') || 
+          !subs.email ||
+          subs.email.toLowerCase() === 'example@gmail.com' ||
+          subs.email.toLowerCase().includes('test@') ||
           subs.email.toLowerCase().includes('example.com')
         ) {
-          console.log(`⚠️ Skipping invalid/test email address: ${subs.email}`);
+          console.log(` Skipping invalid/test email address: ${subs.email}`);
           continue;
         }
 
@@ -1514,19 +1793,19 @@ app.post('/api/exports/run-scheduled', async (req, res) => {
             await mailer.sendMail({
               from: `"AtmosTrack Data" <${process.env.EMAIL_USER}>`,
               to: subs.email,
-              subject: `📊 AtmosTrack Daily Export: ${recipe.name}`,
+              subject: ` AtmosTrack Daily Export: ${recipe.name}`,
               html: `
                 <div style="font-family: system-ui, sans-serif; padding: 16px; max-width: 560px;">
                   <h2 style="color: #1e293b;">Your scheduled data export is ready</h2>
                   <p>Recipe: <strong>${recipe.name}</strong></p>
                   <p>The CSV file is attached to this email. Open it in Excel, Python (pandas), or any spreadsheet tool.</p>
                   <p style="font-size: 12px; color: #64748b;">
-                    Time range: ${new Date(recipe.timeRange.from).toLocaleDateString()} –
+                    Time range: ${new Date(recipe.timeRange.from).toLocaleDateString()} 
                     ${new Date(recipe.timeRange.to).toLocaleDateString()}<br/>
                     Generated: ${new Date().toLocaleString()}
                   </p>
                   <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 16px 0;"/>
-                  <p style="font-size: 11px; color: #94a3b8;">AtmosTrack • Scheduled Automation</p>
+                  <p style="font-size: 11px; color: #94a3b8;">AtmosTrack  Scheduled Automation</p>
                 </div>
               `,
               attachments: [
@@ -1538,7 +1817,7 @@ app.post('/api/exports/run-scheduled', async (req, res) => {
               ],
             });
 
-            console.log(`📧 Scheduled CSV attachment sent to ${subs.email} (${filename})`);
+            console.log(` Scheduled CSV attachment sent to ${subs.email} (${filename})`);
             sent++;
           } else {
             console.warn('Could not find recipe for runUrl:', runUrl);
@@ -1547,7 +1826,7 @@ app.post('/api/exports/run-scheduled', async (req, res) => {
           console.error('Error processing scheduled export for', subs.email, mailErr);
         }
       }
-      console.log(`✅ Background processing complete: processed ${processed}, sent ${sent}.`);
+      console.log(` Background processing complete: processed ${processed}, sent ${sent}.`);
     })();
   } catch (err) {
     console.error('Error in /api/exports/run-scheduled:', err);
@@ -1562,72 +1841,72 @@ app.post('/api/exports/run-scheduled', async (req, res) => {
 // create recipe
 app.post('/api/exports/recipe', authenticateToken,
   requireVerified, async (req, res) => {
-  try {
-    const {
-      name,
-      questionText = '',
-      deviceId = null,
-      context = 'all',
-      timeRange,
-      fields = [],
-      format = 'csv',
-      language = 'python',
-      delivery = {},
-    } = req.body;
+    try {
+      const {
+        name,
+        questionText = '',
+        deviceId = null,
+        context = 'all',
+        timeRange,
+        fields = [],
+        format = 'csv',
+        language = 'python',
+        delivery = {},
+      } = req.body;
 
 
-    if (!name || !timeRange?.from || !timeRange?.to) {
-      return res.status(400).json({
-        ok: false,
-        error: 'name, timeRange.from, timeRange.to required',
-      });
-    }
+      if (!name || !timeRange?.from || !timeRange?.to) {
+        return res.status(400).json({
+          ok: false,
+          error: 'name, timeRange.from, timeRange.to required',
+        });
+      }
 
 
-    const recipeId =
-      'rec_' +
-      crypto
-        .createHash('sha256')
-        .update(name + String(timeRange.from) + String(timeRange.to))
-        .digest('hex')
-        .slice(0, 10);
+      const recipeId =
+        'rec_' +
+        crypto
+          .createHash('sha256')
+          .update(name + String(timeRange.from) + String(timeRange.to))
+          .digest('hex')
+          .slice(0, 10);
 
-    const accessToken = crypto.randomBytes(32).toString('hex');
-
-
-    const recipe = await ExportRecipe.findOneAndUpdate(
-      { recipeId },
-      {
-        recipeId,
-        name,
-        questionText,
-        deviceId,
-        context,
-        timeRange,
-        fields,
-        format,
-        language,
-        delivery,
-        accessToken,
-      },
-      { upsert: true, new: true },
-    );
+      const accessToken = crypto.randomBytes(32).toString('hex');
 
 
-    const baseUrl = process.env.PUBLIC_BASE_URL || 'http://localhost:5000';
+      const recipe = await ExportRecipe.findOneAndUpdate(
+        { recipeId },
+        {
+          recipeId,
+          name,
+          questionText,
+          deviceId,
+          context,
+          timeRange,
+          fields,
+          format,
+          language,
+          delivery,
+          accessToken,
+        },
+        { upsert: true, new: true },
+      );
 
-    return res.json({
-      ok: true,
-      recipe,
-      runUrl: `${baseUrl}/api/exports/recipe/${recipe.recipeId}/run?token=${recipe.accessToken}`,
-    });
-  } catch (err) {
-    console.error('Error in /api/exports/recipe:', err);
-    return res
-      .status(500)
-      .json({ ok: false, error: 'Failed to create export recipe' });
-  }
-});
+
+      const baseUrl = process.env.PUBLIC_BASE_URL || 'http://localhost:5000';
+
+      return res.json({
+        ok: true,
+        recipe,
+        runUrl: `${baseUrl}/api/exports/recipe/${recipe.recipeId}/run?token=${recipe.accessToken}`,
+      });
+    } catch (err) {
+      console.error('Error in /api/exports/recipe:', err);
+      return res
+        .status(500)
+        .json({ ok: false, error: 'Failed to create export recipe' });
+    }
+  });
 
 
 // run recipe: stream CSV based on stored config
@@ -1635,436 +1914,436 @@ app.post('/api/exports/recipe', authenticateToken,
 app.get('/api/exports/recipe/:id/run', async (req, res) => {
   const { token } = req.query;
   if (!token) return res.status(401).send('Unauthorized: token query param required');
-  try {
-    const { id } = req.params;
-    const recipe = await ExportRecipe.findOne({ recipeId: id }).lean();
+  try {
+    const { id } = req.params;
+    const recipe = await ExportRecipe.findOne({ recipeId: id }).lean();
 
 
-    if (!recipe) {
-      return res.status(404).send('Recipe not found');
-    }
+    if (!recipe) {
+      return res.status(404).send('Recipe not found');
+    }
     if (recipe.accessToken !== token) return res.status(403).send('Forbidden: invalid token');
 
 
-    const { timeRange, deviceId, context } = recipe;
-    const { filter } = buildExportFilter({
-      from: timeRange.from,
-      to: timeRange.to,
-      deviceId,
-      context,
-    });
+    const { timeRange, deviceId, context } = recipe;
+    const { filter } = buildExportFilter({
+      from: timeRange.from,
+      to: timeRange.to,
+      deviceId,
+      context,
+    });
 
 
-    const cursor = Reading.find(filter).sort({ timestamp: 1 }).cursor();
+    const cursor = Reading.find(filter).sort({ timestamp: 1 }).cursor();
 
 
-    const defaultColumns = [
-      'timestamp',
-      'deviceId',
-      'sessionId',
-      'location.context',
-      'location.lat',
-      'location.lng',
-      'location.altitude',
-      'location.speed',
-      'environment.temperature',
-      'environment.humidity',
-      'air.aqi',
-      'air.co2ppm',
-      'air.mq135Raw',
-      'air.mq135Volt',
-      'aiFeatures.vocAvg',
-      'aiFeatures.vocStd',
-      'aiFeatures.co2Avg',
-      'aiFeatures.co2Std',
-      'aiFeatures.vibrationAmp',
-      'aiFeatures.vibrationFreq',
-      'aiFeatures.Hour',
-      'sourceClassification.label',
-      'sourceClassification.confidence',
-      'emissions.estimatedCO2eqKg',
-      'emissions.method',
-      'meta.firmwareVersion',
-      'meta.gridRegion',
-    ];
+    const defaultColumns = [
+      'timestamp',
+      'deviceId',
+      'sessionId',
+      'location.context',
+      'location.lat',
+      'location.lng',
+      'location.altitude',
+      'location.speed',
+      'environment.temperature',
+      'environment.humidity',
+      'air.aqi',
+      'air.co2ppm',
+      'air.mq135Raw',
+      'air.mq135Volt',
+      'aiFeatures.vocAvg',
+      'aiFeatures.vocStd',
+      'aiFeatures.co2Avg',
+      'aiFeatures.co2Std',
+      'aiFeatures.vibrationAmp',
+      'aiFeatures.vibrationFreq',
+      'aiFeatures.Hour',
+      'sourceClassification.label',
+      'sourceClassification.confidence',
+      'emissions.estimatedCO2eqKg',
+      'emissions.method',
+      'meta.firmwareVersion',
+      'meta.gridRegion',
+    ];
 
 
-    const columns =
-      Array.isArray(recipe.fields) && recipe.fields.length > 0
-        ? recipe.fields
-        : defaultColumns;
+    const columns =
+      Array.isArray(recipe.fields) && recipe.fields.length > 0
+        ? recipe.fields
+        : defaultColumns;
 
 
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="atmostrack-${recipe.recipeId}.csv"`,
-    );
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="atmostrack-${recipe.recipeId}.csv"`,
+    );
 
 
-    res.write(columns.join(',') + '\n');
+    res.write(columns.join(',') + '\n');
 
 
-    cursor.on('data', (doc) => {
-      const rowValues = columns.map((col) => {
-        if (col === 'timestamp') {
-          return doc.timestamp ? new Date(doc.timestamp).toISOString() : '';
-        }
-        const val = getPath(doc, col);
-        if (val === undefined || val === null) return '';
-        return String(val);
-      });
+    cursor.on('data', (doc) => {
+      const rowValues = columns.map((col) => {
+        if (col === 'timestamp') {
+          return doc.timestamp ? new Date(doc.timestamp).toISOString() : '';
+        }
+        const val = getPath(doc, col);
+        if (val === undefined || val === null) return '';
+        return String(val);
+      });
 
 
-      res.write(rowValues.join(',') + '\n');
-    });
+      res.write(rowValues.join(',') + '\n');
+    });
 
 
-    cursor.on('end', async () => {
-      await ExportRecipe.updateOne(
-        { recipeId: id },
-        {
-          $set: { lastRunAt: new Date() },
-          $inc: { runCount: 1 },
-        },
-      );
-      res.end();
-    });
+    cursor.on('end', async () => {
+      await ExportRecipe.updateOne(
+        { recipeId: id },
+        {
+          $set: { lastRunAt: new Date() },
+          $inc: { runCount: 1 },
+        },
+      );
+      res.end();
+    });
 
 
-    cursor.on('error', (err) => {
-      console.error('Recipe CSV cursor error:', err);
-      if (!res.headersSent) {
-        res.status(500).send('Error generating recipe CSV');
-      } else {
-        res.end();
-      }
-    });
-  } catch (err) {
-    console.error('Error in /api/exports/recipe/:id/run:', err);
-    if (!res.headersSent) {
-      res.status(500).send('Internal recipe run error');
-    } else {
-      res.end();
-    }
-  }
+    cursor.on('error', (err) => {
+      console.error('Recipe CSV cursor error:', err);
+      if (!res.headersSent) {
+        res.status(500).send('Error generating recipe CSV');
+      } else {
+        res.end();
+      }
+    });
+  } catch (err) {
+    console.error('Error in /api/exports/recipe/:id/run:', err);
+    if (!res.headersSent) {
+      res.status(500).send('Internal recipe run error');
+    } else {
+      res.end();
+    }
+  }
 });
 
 
 // ------------ AQI / emissions helpers ------------
 function estimateAQIFromMQ135(raw) {
-  if (raw == null) return 75;
-  return Math.max(0, Math.min(500, Math.round((raw / 4095) * 300)));
+  if (raw == null) return 75;
+  return Math.max(0, Math.min(500, Math.round((raw / 4095) * 300)));
 }
 
 
 function estimateEmissionsKgFromCO2ppm(ppm) {
-  if (!ppm) return 0;
-  return Number((ppm / 1_000_000_000).toFixed(8));
+  if (!ppm) return 0;
+  return Number((ppm / 1_000_000_000).toFixed(8));
 }
 
 
 // ------------ Sensor ingest ------------
 app.post('/api/sensor-data', async (req, res) => {
-  const {
-    deviceId = 'ATMOSTRACK-01',
-    sessionId = 'default-session',
-    environment = {},
-    imu = {},
-    location = {},
-    purification = {},
-    co2Level = null,
-    mq135 = {},
-    context = 'indoor',
-  } = req.body;
+  const {
+    deviceId = 'ATMOSTRACK-01',
+    sessionId = 'default-session',
+    environment = {},
+    imu = {},
+    location = {},
+    purification = {},
+    co2Level = null,
+    mq135 = {},
+    context = 'indoor',
+  } = req.body;
 
 
-  const processedCO2 =
-    co2Level !== null
-      ? {
-          ppm: parseFloat(Number(co2Level).toFixed(1)),
-          status: getCO2Status(Number(co2Level)),
-          healthAdvice: getCO2HealthAdvice(Number(co2Level)),
-        }
-      : null;
+  const processedCO2 =
+    co2Level !== null
+      ? {
+        ppm: parseFloat(Number(co2Level).toFixed(1)),
+        status: getCO2Status(Number(co2Level)),
+        healthAdvice: getCO2HealthAdvice(Number(co2Level)),
+      }
+      : null;
 
 
-  const timestamp = new Date();
+  const timestamp = new Date();
 
 
-  const preservedLat =
-    latestSensorData &&
-    latestSensorData.deviceId === deviceId &&
-    latestSensorData.location &&
-    latestSensorData.location.lat != null
-      ? latestSensorData.location.lat
-      : location.lat ?? null;
+  const preservedLat =
+    latestSensorData &&
+      latestSensorData.deviceId === deviceId &&
+      latestSensorData.location &&
+      latestSensorData.location.lat != null
+      ? latestSensorData.location.lat
+      : location.lat ?? null;
 
 
-  const preservedLng =
-    latestSensorData &&
-    latestSensorData.deviceId === deviceId &&
-    latestSensorData.location &&
-    latestSensorData.location.lng != null
-      ? latestSensorData.location.lng
-      : location.lng ?? null;
+  const preservedLng =
+    latestSensorData &&
+      latestSensorData.deviceId === deviceId &&
+      latestSensorData.location &&
+      latestSensorData.location.lng != null
+      ? latestSensorData.location.lng
+      : location.lng ?? null;
 
 
-  const preservedSpeed =
-    location.speed ??
-    (latestSensorData &&
-    latestSensorData.deviceId === deviceId &&
-    latestSensorData.location
-      ? latestSensorData.location.speed ?? null
-      : null);
+  const preservedSpeed =
+    location.speed ??
+    (latestSensorData &&
+      latestSensorData.deviceId === deviceId &&
+      latestSensorData.location
+      ? latestSensorData.location.speed ?? null
+      : null);
 
 
-  const sensorReading = {
-    deviceId,
-    environment: {
-      temperature: environment.temperature ?? null,
-      humidity: environment.humidity ?? null,
-    },
-    imu: {
-      ax: imu.ax ?? null,
-      ay: imu.ay ?? null,
-      az: imu.az ?? null,
-      gx: imu.gx ?? null,
-      gy: imu.gy ?? null,
-      gz: imu.gz ?? null,
-    },
-    location: {
-      lat: preservedLat,
-      lng: preservedLng,
-      speed: preservedSpeed,
-    },
-    purification: {
-      on: true,
-    },
-    co2: processedCO2,
-    mq135: {
-      raw: mq135.raw ?? null,
-      volt: mq135.volt ?? null,
-    },
-    timestamp: timestamp.toISOString(),
-  };
+  const sensorReading = {
+    deviceId,
+    environment: {
+      temperature: environment.temperature ?? null,
+      humidity: environment.humidity ?? null,
+    },
+    imu: {
+      ax: imu.ax ?? null,
+      ay: imu.ay ?? null,
+      az: imu.az ?? null,
+      gx: imu.gx ?? null,
+      gy: imu.gy ?? null,
+      gz: imu.gz ?? null,
+    },
+    location: {
+      lat: preservedLat,
+      lng: preservedLng,
+      speed: preservedSpeed,
+    },
+    purification: {
+      on: true,
+    },
+    co2: processedCO2,
+    mq135: {
+      raw: mq135.raw ?? null,
+      volt: mq135.volt ?? null,
+    },
+    timestamp: timestamp.toISOString(),
+  };
 
 
-  aiWindow.push(sensorReading);
-  if (aiWindow.length > WINDOW_SIZE) {
-    aiWindow = aiWindow.slice(-WINDOW_SIZE);
-  }
+  aiWindow.push(sensorReading);
+  if (aiWindow.length > WINDOW_SIZE) {
+    aiWindow = aiWindow.slice(-WINDOW_SIZE);
+  }
 
 
-  let CO2_avg = null;
-  let CO2_std = null;
+  let CO2_avg = null;
+  let CO2_std = null;
 
 
-  const co2Values = aiWindow
-    .map((r) =>
-      r.co2 && typeof r.co2.ppm === 'number' ? r.co2.ppm : null,
-    )
-    .filter((v) => v !== null);
+  const co2Values = aiWindow
+    .map((r) =>
+      r.co2 && typeof r.co2.ppm === 'number' ? r.co2.ppm : null,
+    )
+    .filter((v) => v !== null);
 
 
-  if (co2Values.length > 0) {
-    const mean =
-      co2Values.reduce((a, b) => a + b, 0) / co2Values.length;
-    const variance =
-      co2Values
-        .map((v) => (v - mean) ** 2)
-        .reduce((a, b) => a + b, 0) / co2Values.length;
-    CO2_avg = mean;
-    CO2_std = Math.sqrt(variance);
-  }
+  if (co2Values.length > 0) {
+    const mean =
+      co2Values.reduce((a, b) => a + b, 0) / co2Values.length;
+    const variance =
+      co2Values
+        .map((v) => (v - mean) ** 2)
+        .reduce((a, b) => a + b, 0) / co2Values.length;
+    CO2_avg = mean;
+    CO2_std = Math.sqrt(variance);
+  }
 
 
-  const now = new Date();
-  const Hour = now.getHours();
+  const now = new Date();
+  const Hour = now.getHours();
 
 
-  const VOC_values = aiWindow
-    .map((r) =>
-      r.mq135 && typeof r.mq135.raw === 'number'
-        ? r.mq135.raw
-        : null,
-    )
-    .filter((v) => v !== null);
+  const VOC_values = aiWindow
+    .map((r) =>
+      r.mq135 && typeof r.mq135.raw === 'number'
+        ? r.mq135.raw
+        : null,
+    )
+    .filter((v) => v !== null);
 
 
-  let VOC_avg = null;
-  let VOC_std = null;
-  if (VOC_values.length > 0) {
-    const meanVOC =
-      VOC_values.reduce((a, b) => a + b, 0) / VOC_values.length;
-    const varianceVOC =
-      VOC_values
-        .map((v) => (v - meanVOC) ** 2)
-        .reduce((a, b) => a + b, 0) / VOC_values.length;
-    VOC_avg = meanVOC;
-    VOC_std = Math.sqrt(varianceVOC);
-  }
+  let VOC_avg = null;
+  let VOC_std = null;
+  if (VOC_values.length > 0) {
+    const meanVOC =
+      VOC_values.reduce((a, b) => a + b, 0) / VOC_values.length;
+    const varianceVOC =
+      VOC_values
+        .map((v) => (v - meanVOC) ** 2)
+        .reduce((a, b) => a + b, 0) / VOC_values.length;
+    VOC_avg = meanVOC;
+    VOC_std = Math.sqrt(varianceVOC);
+  }
 
 
-  const vibValues = aiWindow
-    .map((r) =>
-      r.imu &&
-      r.imu.ax !== null &&
-      r.imu.ay !== null &&
-      r.imu.az !== null
-        ? (Math.abs(r.imu.ax) +
-            Math.abs(r.imu.ay) +
-            Math.abs(r.imu.az)) /
-          3
-        : null,
-    )
-    .filter((v) => v !== null);
+  const vibValues = aiWindow
+    .map((r) =>
+      r.imu &&
+        r.imu.ax !== null &&
+        r.imu.ay !== null &&
+        r.imu.az !== null
+        ? (Math.abs(r.imu.ax) +
+          Math.abs(r.imu.ay) +
+          Math.abs(r.imu.az)) /
+        3
+        : null,
+    )
+    .filter((v) => v !== null);
 
 
-  let Vibration_amp = null;
-  let Vibration_freq = null;
-  if (vibValues.length > 0) {
-    Vibration_amp =
-      vibValues.reduce((a, b) => a + b, 0) / vibValues.length;
-    const threshold = 15000;
-    Vibration_freq = aiWindow.filter((r) => {
-      const ax = r.imu.ax ?? 0;
-      const ay = r.imu.ay ?? 0;
-      const az = r.imu.az ?? 0;
-      return (
-        Math.abs(ax) > threshold ||
-        Math.abs(ay) > threshold ||
-        Math.abs(az) > threshold
-      );
-    }).length;
-  }
+  let Vibration_amp = null;
+  let Vibration_freq = null;
+  if (vibValues.length > 0) {
+    Vibration_amp =
+      vibValues.reduce((a, b) => a + b, 0) / vibValues.length;
+    const threshold = 15000;
+    Vibration_freq = aiWindow.filter((r) => {
+      const ax = r.imu.ax ?? 0;
+      const ay = r.imu.ay ?? 0;
+      const az = r.imu.az ?? 0;
+      return (
+        Math.abs(ax) > threshold ||
+        Math.abs(ay) > threshold ||
+        Math.abs(az) > threshold
+      );
+    }).length;
+  }
 
 
-  sensorReading.aiFeatures = {
-    VOC_avg,
-    VOC_std,
-    CO2_avg,
-    CO2_std,
-    Vibration_amp,
-    Vibration_freq,
-    Hour,
-  };
+  sensorReading.aiFeatures = {
+    VOC_avg,
+    VOC_std,
+    CO2_avg,
+    CO2_std,
+    Vibration_amp,
+    Vibration_freq,
+    Hour,
+  };
 
 
-  latestSensorData = sensorReading;
-  sensorHistory.push(sensorReading);
-  if (sensorHistory.length > 100) {
-    sensorHistory = sensorHistory.slice(-100);
-  }
+  latestSensorData = sensorReading;
+  sensorHistory.push(sensorReading);
+  if (sensorHistory.length > 100) {
+    sensorHistory = sensorHistory.slice(-100);
+  }
 
 
-  io.emit('sensorUpdate', sensorReading);
+  io.emit('sensorUpdate', sensorReading);
 
 
-  if (
-    VOC_avg !== null &&
-    CO2_avg !== null &&
-    Vibration_amp !== null &&
-    Vibration_freq !== null
-  ) {
-    axios
-      .post('http://localhost:8000/classify', {
-        VOC_avg,
-        VOC_std: VOC_std || 0,
-        CO2_avg,
-        CO2_std: CO2_std || 0,
-        Vibration_amp,
-        Vibration_freq,
-        Hour,
-      })
-      .then((response) => {
-        const rawResult = response.data;
-        const adjusted = adjustSourceClassification(
-          sensorReading,
-          rawResult,
-        );
-        sensorReading.sourceClassification = adjusted;
-        latestSensorData = sensorReading;
-        io.emit('sensorUpdate', sensorReading);
-      })
-      .catch((err) => {
-        console.error('AI server error:', err.message);
-      });
-  }
+  if (
+    VOC_avg !== null &&
+    CO2_avg !== null &&
+    Vibration_amp !== null &&
+    Vibration_freq !== null
+  ) {
+    axios
+      .post('http://localhost:8000/classify', {
+        VOC_avg,
+        VOC_std: VOC_std || 0,
+        CO2_avg,
+        CO2_std: CO2_std || 0,
+        Vibration_amp,
+        Vibration_freq,
+        Hour,
+      })
+      .then((response) => {
+        const rawResult = response.data;
+        const adjusted = adjustSourceClassification(
+          sensorReading,
+          rawResult,
+        );
+        sensorReading.sourceClassification = adjusted;
+        latestSensorData = sensorReading;
+        io.emit('sensorUpdate', sensorReading);
+      })
+      .catch((err) => {
+        console.error('AI server error:', err.message);
+      });
+  }
 
 
-  const co2Message = processedCO2
-    ? ` | CO2: ${processedCO2.ppm} ppm (${processedCO2.status})`
-    : '';
-  const mqMessage =
-    sensorReading.mq135 && sensorReading.mq135.raw !== null
-      ? ` | MQ135: raw=${sensorReading.mq135.raw} V=${sensorReading.mq135.volt}`
-      : '';
-  const imuMessage =
-    sensorReading.imu && sensorReading.imu.ax !== null
-      ? ` | MPU: ax=${sensorReading.imu.ax} ay=${sensorReading.imu.ay} az=${sensorReading.imu.az}`
-      : '';
+  const co2Message = processedCO2
+    ? ` | CO2: ${processedCO2.ppm} ppm (${processedCO2.status})`
+    : '';
+  const mqMessage =
+    sensorReading.mq135 && sensorReading.mq135.raw !== null
+      ? ` | MQ135: raw=${sensorReading.mq135.raw} V=${sensorReading.mq135.volt}`
+      : '';
+  const imuMessage =
+    sensorReading.imu && sensorReading.imu.ax !== null
+      ? ` | MPU: ax=${sensorReading.imu.ax} ay=${sensorReading.imu.ay} az=${sensorReading.imu.az}`
+      : '';
 
 
-  console.log(
-    `📊 Env T=${sensorReading.environment.temperature}°C ` +
-      `H=${sensorReading.environment.humidity}%${co2Message}${mqMessage}${imuMessage} | ` +
-      `GPS=(${sensorReading.location.lat},${sensorReading.location.lng}) ` +
-      `v=${sensorReading.location.speed}km/h | ` +
-      `PUR=${sensorReading.purification.on ? 'ON' : 'OFF'}`,
-  );
+  console.log(
+    ` Env T=${sensorReading.environment.temperature}C ` +
+    `H=${sensorReading.environment.humidity}%${co2Message}${mqMessage}${imuMessage} | ` +
+    `GPS=(${sensorReading.location.lat},${sensorReading.location.lng}) ` +
+    `v=${sensorReading.location.speed}km/h | ` +
+    `PUR=${sensorReading.purification.on ? 'ON' : 'OFF'}`,
+  );
 
 
-  try {
-    const aqi = estimateAQIFromMQ135(sensorReading.mq135.raw);
-    const co2ppm = processedCO2 ? processedCO2.ppm : 0;
-    const estimatedCO2eqKg =
-      estimateEmissionsKgFromCO2ppm(co2ppm);
+  try {
+    const aqi = estimateAQIFromMQ135(sensorReading.mq135.raw);
+    const co2ppm = processedCO2 ? processedCO2.ppm : 0;
+    const estimatedCO2eqKg =
+      estimateEmissionsKgFromCO2ppm(co2ppm);
 
 
-    const readingDoc = {
-      deviceId,
-      sessionId,
-      timestamp,
-      location: {
-        lat: sensorReading.location.lat,
-        lng: sensorReading.location.lng,
-        altitude: null,
-        context,
-      },
-      environment: {
-        temperature: sensorReading.environment.temperature,
-        humidity: sensorReading.environment.humidity,
-      },
-      air: {
-        aqi,
-        co2ppm,
-        mq135Raw: sensorReading.mq135.raw,
-        mq135Volt: sensorReading.mq135.volt,
-      },
-      purification: {
-        on: true,
-      },
-      aiFeatures: {
-        vocAvg: VOC_avg,
-        vocStd: VOC_std,
-        co2Avg: CO2_avg,
-        co2Std: CO2_std,
-        vibrationAmp: Vibration_amp,
-        vibrationFreq: Vibration_freq,
-        Hour,
-      },
-      sourceClassification: sensorReading.sourceClassification
-        ? {
-            label: sensorReading.sourceClassification.label,
-            confidence:
-              sensorReading.sourceClassification.confidence,
-          }
-        : {
-            label: 'Unknown',
-            confidence: 0,
-          },
-      emissions: {
+    const readingDoc = {
+      deviceId,
+      sessionId,
+      timestamp,
+      location: {
+        lat: sensorReading.location.lat,
+        lng: sensorReading.location.lng,
+        altitude: null,
+        context,
+      },
+      environment: {
+        temperature: sensorReading.environment.temperature,
+        humidity: sensorReading.environment.humidity,
+      },
+      air: {
+        aqi,
+        co2ppm,
+        mq135Raw: sensorReading.mq135.raw,
+        mq135Volt: sensorReading.mq135.volt,
+      },
+      purification: {
+        on: true,
+      },
+      aiFeatures: {
+        vocAvg: VOC_avg,
+        vocStd: VOC_std,
+        co2Avg: CO2_avg,
+        co2Std: CO2_std,
+        vibrationAmp: Vibration_amp,
+        vibrationFreq: Vibration_freq,
+        Hour,
+      },
+      sourceClassification: sensorReading.sourceClassification
+        ? {
+          label: sensorReading.sourceClassification.label,
+          confidence:
+            sensorReading.sourceClassification.confidence,
+        }
+        : {
+          label: 'Unknown',
+          confidence: 0,
+        },
+      emissions: {
         estimatedCO2eqKg,
         method: 'model',
       },
@@ -2075,7 +2354,7 @@ app.post('/api/sensor-data', async (req, res) => {
     };
 
 
-    // ── Blockchain integrity: compute SHA-256 fingerprint of the immutable payload ──
+    //  Blockchain integrity: compute SHA-256 fingerprint of the immutable payload 
     // We hash the canonical JSON of the sensor fields (sorted keys for determinism).
     // Any post-save alteration to these values will cause verification to fail.
     const payloadToHash = {
@@ -2098,10 +2377,10 @@ app.post('/api/sensor-data', async (req, res) => {
     readingDoc.txHash = null;
 
     const savedReading = await Reading.create(readingDoc);
-    console.log(`✅ SAVED READING [${deviceId}] hash=${dataHash.slice(0, 16)}… anchorStatus=PENDING`);
+    console.log(` SAVED READING [${deviceId}] hash=${dataHash.slice(0, 16)} anchorStatus=PENDING`);
 
-    // ── Blockchain anchoring (async / non-blocking) ──────────────────────────
-    // Fires after we already responded to the ESP32 — never delays sensor ingestion.
+    //  Blockchain anchoring (async / non-blocking) 
+    // Fires after we already responded to the ESP32  never delays sensor ingestion.
     if (anchorReady()) {
       setImmediate(async () => {
         try {
@@ -2111,10 +2390,10 @@ app.post('/api/sensor-data', async (req, res) => {
               anchorStatus: 'ANCHORED',
               txHash: result.txHash,
             });
-            console.log(`⛓️  ANCHORED [${savedReading._id}] txHash=${result.txHash}`);
+            console.log(`  ANCHORED [${savedReading._id}] txHash=${result.txHash}`);
           }
         } catch (anchorErr) {
-          console.warn('⚠️  Background anchor failed (non-fatal):', anchorErr.message);
+          console.warn('  Background anchor failed (non-fatal):', anchorErr.message);
         }
       });
     }
@@ -2129,7 +2408,7 @@ app.post('/api/sensor-data', async (req, res) => {
 
 // ------------ Tamper-proof verification endpoint ------------
 // Re-hashes the stored reading and compares to the original dataHash.
-// If MongoDB data was altered, hashes will NOT match — tamper detected.
+// If MongoDB data was altered, hashes will NOT match  tamper detected.
 app.get('/api/sensor-data/:id/verify', async (req, res) => {
   try {
     const reading = await Reading.findById(req.params.id).lean();
@@ -2158,7 +2437,7 @@ app.get('/api/sensor-data/:id/verify', async (req, res) => {
 
     const intact = recomputedHash === reading.dataHash;
 
-    console.log(`🔍 VERIFY [${reading._id}] intact=${intact} stored=${reading.dataHash.slice(0,16)}… recomputed=${recomputedHash.slice(0,16)}…`);
+    console.log(` VERIFY [${reading._id}] intact=${intact} stored=${reading.dataHash.slice(0, 16)} recomputed=${recomputedHash.slice(0, 16)}`);
 
     return res.json({
       ok: true,
@@ -2171,8 +2450,8 @@ app.get('/api/sensor-data/:id/verify', async (req, res) => {
       anchorStatus: reading.anchorStatus ?? 'PENDING',
       txHash: reading.txHash ?? null,
       verdict: intact
-        ? '✅ DATA INTACT — hash matches. No tampering detected.'
-        : '🚨 TAMPER DETECTED — stored data does not match original hash!',
+        ? ' DATA INTACT  hash matches. No tampering detected.'
+        : ' TAMPER DETECTED  stored data does not match original hash!',
     });
   } catch (err) {
     console.error('Error in /api/sensor-data/:id/verify:', err);
@@ -2183,21 +2462,21 @@ app.get('/api/sensor-data/:id/verify', async (req, res) => {
 
 // ------------ Phone-based location correction ------------
 app.post('/api/nodes/set-location', async (req, res) => {
-  try {
-    const { deviceId, lat, lng, timestamp } = req.body;
+  try {
+    const { deviceId, lat, lng, timestamp } = req.body;
 
 
-    if (!deviceId || typeof lat !== 'number' || typeof lng !== 'number') {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: 'deviceId, lat, lng are required',
-        });
-    }
+    if (!deviceId || typeof lat !== 'number' || typeof lng !== 'number') {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: 'deviceId, lat, lng are required',
+        });
+    }
 
 
-    const ts = timestamp ? new Date(timestamp) : new Date();
+    const ts = timestamp ? new Date(timestamp) : new Date();
 
 
     if (!latestSensorData) {
@@ -2224,90 +2503,90 @@ app.post('/api/nodes/set-location', async (req, res) => {
     }
 
 
-    sensorHistory = sensorHistory.map((r) =>
-      r.deviceId === deviceId
-        ? {
-            ...r,
-            location: {
-              lat,
-              lng,
-              speed: r.location?.speed ?? null,
-            },
-          }
-        : r,
-    );
+    sensorHistory = sensorHistory.map((r) =>
+      r.deviceId === deviceId
+        ? {
+          ...r,
+          location: {
+            lat,
+            lng,
+            speed: r.location?.speed ?? null,
+          },
+        }
+        : r,
+    );
 
 
-    const dayStart = new Date(ts);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(ts);
-    dayEnd.setHours(23, 59, 59, 999);
+    const dayStart = new Date(ts);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(ts);
+    dayEnd.setHours(23, 59, 59, 999);
 
 
-    await Reading.updateMany(
-      {
-        deviceId,
-        timestamp: { $gte: dayStart, $lte: dayEnd },
-      },
-      {
-        $set: {
-          'location.lat': lat,
-          'location.lng': lng,
-        },
-      },
-    );
+    await Reading.updateMany(
+      {
+        deviceId,
+        timestamp: { $gte: dayStart, $lte: dayEnd },
+      },
+      {
+        $set: {
+          'location.lat': lat,
+          'location.lng': lng,
+        },
+      },
+    );
 
 
-    return res.json({ success: true });
-  } catch (err) {
-    console.error('Error in /api/nodes/set-location:', err);
-    return res
-      .status(500)
-      .json({ success: false, error: 'Server error' });
-  }
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Error in /api/nodes/set-location:', err);
+    return res
+      .status(500)
+      .json({ success: false, error: 'Server error' });
+  }
 });
 
 
 // ------------ Latest + health ------------
 app.get('/api/latest', (req, res) => {
-  res.json({
-    success: true,
-    data: latestSensorData,
-    isOnline: latestSensorData
-      ? Date.now() -
-          new Date(latestSensorData.timestamp).getTime() <
-        30000
-      : false,
-  });
+  res.json({
+    success: true,
+    data: latestSensorData,
+    isOnline: latestSensorData
+      ? Date.now() -
+      new Date(latestSensorData.timestamp).getTime() <
+      30000
+      : false,
+  });
 });
 
 
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    service: 'AtmosTrack Multi-Sensor Backend',
-    version: '3.2.0',
-    sensors: ['DHT11', 'MG811', 'MQ135', 'MPU6050', 'GPS'],
-    dataPoints: sensorHistory.length,
-    lastReading: latestSensorData
-      ? latestSensorData.timestamp
-      : null,
-  });
+  res.json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    service: 'AtmosTrack Multi-Sensor Backend',
+    version: '3.2.0',
+    sensors: ['DHT11', 'MG811', 'MQ135', 'MPU6050', 'GPS'],
+    dataPoints: sensorHistory.length,
+    lastReading: latestSensorData
+      ? latestSensorData.timestamp
+      : null,
+  });
 });
 
 
 // ------------ DHI + batches ------------
 async function computeDHIForDay({ deviceId, date }) {
-  const fromTs = new Date(date + 'T00:00:00.000Z');
-  const toTs = new Date(date + 'T23:59:59.999Z');
+  const fromTs = new Date(date + 'T00:00:00.000Z');
+  const toTs = new Date(date + 'T23:59:59.999Z');
 
 
-  const SAMPLE_INTERVAL_SECONDS = 30;
-  const TOKENS_PER_DHI_HOUR = 0.1;
+  const SAMPLE_INTERVAL_SECONDS = 30;
+  const TOKENS_PER_DHI_HOUR = 0.1;
 
 
-  const readings = await Reading.find({
+  const readings = await Reading.find({
     deviceId,
     timestamp: { $gte: fromTs, $lte: toTs },
   })
@@ -2315,71 +2594,71 @@ async function computeDHIForDay({ deviceId, date }) {
     .lean();
 
 
-  console.log('DHI DEBUG', {
-    deviceId,
-    date,
-    fromTs,
-    toTs,
-    count: readings.length,
-    first: readings[0]?.timestamp,
-    last: readings[readings.length - 1]?.timestamp,
-  });
+  console.log('DHI DEBUG', {
+    deviceId,
+    date,
+    fromTs,
+    toTs,
+    count: readings.length,
+    first: readings[0]?.timestamp,
+    last: readings[readings.length - 1]?.timestamp,
+  });
 
 
-  if (!readings.length) {
-    return null;
-  }
+  if (!readings.length) {
+    return null;
+  }
 
 
-  const count = readings.length;
-  const hoursByCadence =
-    (count * SAMPLE_INTERVAL_SECONDS) / 3600;
+  const count = readings.length;
+  const hoursByCadence =
+    (count * SAMPLE_INTERVAL_SECONDS) / 3600;
 
 
-  const firstTs = new Date(readings[0].timestamp).getTime();
-  const lastTs = new Date(
-    readings[readings.length - 1].timestamp,
-  ).getTime();
-  const spanHours =
-    (lastTs - firstTs) / (1000 * 60 * 60);
+  const firstTs = new Date(readings[0].timestamp).getTime();
+  const lastTs = new Date(
+    readings[readings.length - 1].timestamp,
+  ).getTime();
+  const spanHours =
+    (lastTs - firstTs) / (1000 * 60 * 60);
 
 
-  const dhiHours = Math.min(
-    hoursByCadence,
-    Math.max(spanHours, 0.0167),
-  );
-  const tokens = Number(
-    (dhiHours * TOKENS_PER_DHI_HOUR).toFixed(4),
-  );
+  const dhiHours = Math.min(
+    hoursByCadence,
+    Math.max(spanHours, 0.0167),
+  );
+  const tokens = Number(
+    (dhiHours * TOKENS_PER_DHI_HOUR).toFixed(4),
+  );
 
 
-  const batchId = crypto
-    .createHash('sha256')
-    .update(
-      `${deviceId}-${date}-${fromTs.toISOString()}-${toTs.toISOString()}`,
-    )
-    .digest('hex')
-    .slice(0, 16);
+  const batchId = crypto
+    .createHash('sha256')
+    .update(
+      `${deviceId}-${date}-${fromTs.toISOString()}-${toTs.toISOString()}`,
+    )
+    .digest('hex')
+    .slice(0, 16);
 
 
-  const batch = await CreditBatch.findOneAndUpdate(
-    { batchId },
-    {
-      batchId,
-      deviceId,
-      fromTs,
-      toTs,
-      date,
-      dhiHours,
-      tokens,
-      aqiThreshold: 0,
-      status: 'PENDING',
-    },
-    { upsert: true, new: true },
-  );
+  const batch = await CreditBatch.findOneAndUpdate(
+    { batchId },
+    {
+      batchId,
+      deviceId,
+      fromTs,
+      toTs,
+      date,
+      dhiHours,
+      tokens,
+      aqiThreshold: 0,
+      status: 'PENDING',
+    },
+    { upsert: true, new: true },
+  );
 
 
-  return batch;
+  return batch;
 }
 
 
@@ -2486,97 +2765,103 @@ app.post(
 
 // list batches
 app.get('/api/carbon/batches', authenticateToken, requireVerified, async (req, res) => {
-  try {
-    const { deviceId } = req.query;
-    const filter = deviceId ? { deviceId: String(deviceId) } : {};
-    const batches = await CreditBatch.find(filter)
-      .sort({ date: -1, createdAt: -1 })
-      .limit(50)
-      .lean();
+  try {
+    const { deviceId } = req.query;
+    const filter = deviceId ? { deviceId: String(deviceId) } : {};
+    const batches = await CreditBatch.find(filter)
+      .sort({ date: -1, createdAt: -1 })
+      .limit(50)
+      .lean();
 
 
-    return res.json({ ok: true, batches });
-  } catch (err) {
-    console.error('Error in /api/carbon/batches:', err);
-    return res
-      .status(500)
-      .json({ ok: false, error: 'Batch list error' });
-  }
+    return res.json({ ok: true, batches });
+  } catch (err) {
+    console.error('Error in /api/carbon/batches:', err);
+    return res
+      .status(500)
+      .json({ ok: false, error: 'Batch list error' });
+  }
 });
 
 
 // ------------ WebSocket ------------
 io.on('connection', (socket) => {
-  console.log(
-    '🔌 Frontend connected from:',
-    socket.handshake.address,
-  );
+  console.log(
+    ' Frontend connected from:',
+    socket.handshake.address,
+  );
 
 
-  if (latestSensorData) {
-    socket.emit('sensorUpdate', latestSensorData);
-    console.log(
-      '📤 Sent latest multi-sensor data to new connection',
-    );
-  }
+  if (latestSensorData) {
+    socket.emit('sensorUpdate', latestSensorData);
+    console.log(
+      ' Sent latest multi-sensor data to new connection',
+    );
+  }
 
 
-  socket.on('disconnect', () => {
-    console.log('❌ Frontend disconnected');
-  });
+  socket.on('disconnect', () => {
+    console.log(' Frontend disconnected');
+  });
 });
 
 
 // ------------ CO2 helpers ------------
 function getCO2Status(ppm) {
-  if (ppm < 400) return 'OUTDOOR_FRESH';
-  if (ppm < 1000) return 'GOOD';
-  if (ppm < 2000) return 'STUFFY';
-  if (ppm < 5000) return 'POOR';
-  return 'DANGEROUS';
+  if (ppm < 400) return 'OUTDOOR_FRESH';
+  if (ppm < 1000) return 'GOOD';
+  if (ppm < 2000) return 'STUFFY';
+  if (ppm < 5000) return 'POOR';
+  return 'DANGEROUS';
 }
 
 
 function getCO2HealthAdvice(ppm) {
-  if (ppm < 400) return 'Outdoor fresh air quality';
-  if (ppm < 1000) return 'Good indoor air quality';
-  if (ppm < 2000)
-    return 'Acceptable but may cause drowsiness';
-  if (ppm < 5000)
-    return 'Poor air quality - increase ventilation';
-  return 'Dangerous levels - evacuate immediately';
+  if (ppm < 400) return 'Outdoor fresh air quality';
+  if (ppm < 1000) return 'Good indoor air quality';
+  if (ppm < 2000)
+    return 'Acceptable but may cause drowsiness';
+  if (ppm < 5000)
+    return 'Poor air quality - increase ventilation';
+  return 'Dangerous levels - evacuate immediately';
 }
 
 
 // ------------ Server listen ------------
-const PORT = 5000;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(
-    `🚀 AtmosTrack Multi-Sensor Backend running on http://0.0.0.0:${PORT}`,
-  );
-  console.log(
-    '🔗 Accepting connections from Vite frontend on port 5173',
-  );
-  console.log(
-    '📡 WebSocket CORS enabled for localhost:5173',
-  );
-  console.log(
-    '🌍 Sensors: DHT11 + MG811 + MQ135 + MPU6050 + GPS',
-  );
-  console.log('📊 API Endpoints:');
-  console.log('   POST /api/auth/signup');
-  console.log('   POST /api/auth/login');
-  console.log('   GET  /api/auth/me');
-  console.log('   POST /api/sensor-data');
-  console.log('   POST /api/nodes/set-location');
-  console.log('   GET  /api/latest');
-  console.log('   GET  /api/health');
-  console.log('   GET  /api/exports/readings');
-  console.log('   GET  /api/exports/readings/csv');
-  console.log('   POST /api/exports/recipe');
-  console.log('   POST /api/exports/subscription');
-  console.log('   GET  /api/exports/recipe/:id/run');
-  console.log('   POST /api/carbon/credit-batch');
-  console.log('   POST /api/carbon/mint-onchain');
-  console.log('   GET  /api/carbon/batches');
-}); 
+const PORT = process.env.PORT || 5000;
+
+if (!process.env.VERCEL) {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(
+      ` AtmosTrack Multi-Sensor Backend running on http://0.0.0.0:${PORT}`,
+    );
+    console.log(
+      ' Accepting connections from Vite frontend on port 5173',
+    );
+    console.log(
+      ' WebSocket CORS enabled for localhost:5173',
+    );
+    console.log(
+      ' Sensors: DHT11 + MG811 + MQ135 + MPU6050 + GPS',
+    );
+    console.log(' API Endpoints:');
+    console.log('   POST /api/auth/signup');
+    console.log('   POST /api/auth/login');
+    console.log('   GET  /api/auth/me');
+    console.log('   POST /api/sensor-data');
+    console.log('   POST /api/nodes/set-location');
+    console.log('   GET  /api/latest');
+    console.log('   GET  /api/health');
+    console.log('   GET  /api/exports/readings');
+    console.log('   GET  /api/exports/readings/csv');
+    console.log('   POST /api/exports/recipe');
+    console.log('   POST /api/exports/subscription');
+    console.log('   GET  /api/exports/recipe/:id/run');
+    console.log('   POST /api/carbon/credit-batch');
+    console.log('   POST /api/carbon/mint-onchain');
+    console.log('   GET  /api/carbon/batches');
+
+  });
+}
+
+export default app;

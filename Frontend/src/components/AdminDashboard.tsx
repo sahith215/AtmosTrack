@@ -2,11 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import {
   ArrowRightCircle,
-  ArrowLeft,
   Shield,
   Users,
   Server,
-  Database,
   Activity,
   Zap,
   Lock,
@@ -22,11 +20,10 @@ import {
   Clock,
   TrendingUp,
 } from 'lucide-react';
-import type { View } from '../App';
 import { API_BASE } from '../config';
 
 type AdminDashboardProps = {
-  setActiveView: (view: View) => void;
+  setActiveView: (view: any) => void;
 };
 
 type AdminStats = {
@@ -364,7 +361,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ setActiveView }) => {
             </div>
 
             <button
-              onClick={() => setActiveView('provenance' as View)}
+              onClick={() => setActiveView('provenance')}
               className="mt-auto w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-500 text-white text-xs font-bold shadow-md hover:shadow-lg hover:scale-[1.02] transition-all"
             >
               Open Provenance Explorer
@@ -399,7 +396,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ setActiveView }) => {
             </div>
 
             <button
-              onClick={() => setActiveView('export')}
+              onClick={() => setActiveView('exportRecipes')}
               className="mt-auto w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-500 text-white text-xs font-bold shadow-md hover:shadow-lg hover:scale-[1.02] transition-all"
             >
               Manage Exports &amp; Automation
@@ -447,7 +444,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ setActiveView }) => {
                 <span className="text-gray-500 flex items-center gap-1.5">
                   <TrendingUp className="w-3.5 h-3.5" /> Anchor coverage
                 </span>
-                <span className="font-bold text-sky-600">{anchorPct.toFixed(1)}%</span>
+                <span className="font-bold text-sky-600">{anchorPct}%</span>
               </div>
             </div>
           </div>

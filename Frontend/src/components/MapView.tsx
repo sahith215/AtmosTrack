@@ -423,15 +423,29 @@ const MapView: React.FC = () => {
         <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-[1000]">
           <div
             className={`flex items-center space-x-2 px-4 py-2 rounded-full text-sm font-medium backdrop-blur-md border border-white/30 ${
-              isOnline ? 'bg-green-100/80 text-green-700' : 'bg-red-100/80 text-red-700'
+              !isOnline
+                ? 'bg-red-100/80 text-red-700'
+                : !latestReading || (Date.now() - new Date(latestReading.timestamp).getTime() > 60000)
+                ? 'bg-amber-100/80 text-amber-700'
+                : 'bg-green-100/80 text-green-700'
             }`}
           >
             <div
               className={`w-2 h-2 rounded-full ${
-                isOnline ? 'bg-green-500' : 'bg-red-500'
+                !isOnline
+                  ? 'bg-red-500'
+                  : !latestReading || (Date.now() - new Date(latestReading.timestamp).getTime() > 60000)
+                  ? 'bg-amber-500'
+                  : 'bg-green-500'
               } animate-pulse`}
             ></div>
-            <span>Monitor: {isOnline ? 'Online' : 'Offline (showing LIET)'}</span>
+            <span>
+              {!isOnline
+                ? 'Monitor: Offline (showing LIET)'
+                : !latestReading || (Date.now() - new Date(latestReading.timestamp).getTime() > 60000)
+                ? 'Monitor: Sensor Offline / Stale'
+                : 'Monitor: Live (Active)'}
+            </span>
           </div>
         </div>
 

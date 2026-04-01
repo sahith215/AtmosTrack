@@ -58,6 +58,13 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    /**
+     * True if the user was created via Google and hasn't selected a role yet.
+     */
+    needsRoleSelection: {
+      type: Boolean,
+      default: false,
+    },
     bio: {
       type: String,
       default: '',
