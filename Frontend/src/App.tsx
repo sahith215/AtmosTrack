@@ -7,7 +7,7 @@ import DataExport from './components/DataExport';
 import MapView from './components/MapView';
 import Toast from './components/Toast';
 import { ToastProvider } from './contexts/ToastContext';
-import CarbonDashboard from './components/CarbonDashboard';
+import ImpactHub from './components/ImpactHub';
 import AtmosTrackAuthCard from './components/AtmosTrackLogin';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import AdminDashboard from './components/AdminDashboard';
@@ -17,12 +17,14 @@ import RootRitual from './components/RootRitual';
 import UserProfile from './components/UserProfile';
 import RoleOnboardingModal from './components/RoleOnboardingModal';
 import { API_BASE } from './config';
-import { View, AuthUser } from './types';
+import { View, AuthUser, Role } from './types';
 
 // Lazy load heavy admin components to break circular dependencies
 const UserRoleCommandSurface = lazy(() => import('./pages/admin/UserRoleCommandSurface'));
 const DataProvenance = lazy(() => import('./components/DataProvenance'));
 const ExportRecipeCommandSurface = lazy(() => import('./pages/admin/ExportRecipeCommandSurface'));
+// @ts-ignore
+const CDRFleetDashboard = lazy(() => import('./components/CDRFleetDashboard'));
 
 const AppViewSwitcher = ({ activeView, user, adminModeUnlocked, setActiveView, handleGrantAdminAccess }: {
   activeView: View;
@@ -35,7 +37,7 @@ const AppViewSwitcher = ({ activeView, user, adminModeUnlocked, setActiveView, h
     case 'home':
       return <Home setActiveView={setActiveView} />;
     case 'dashboard':
-      return <Dashboard setActiveView={setActiveView as any} />;
+      return <Dashboard setActiveView={setActiveView as (v: string) => void} />;
     case 'map':
       return <MapView />;
     case 'health':
@@ -67,7 +69,7 @@ const AppViewSwitcher = ({ activeView, user, adminModeUnlocked, setActiveView, h
       }
       return <DataExport />;
     case 'carbon':
-      return <CarbonDashboard />;
+      return <ImpactHub />;
     case 'admin':
       if (user?.role === 'admin' || adminModeUnlocked) {
         return <AdminDashboard setActiveView={setActiveView} />;
@@ -97,6 +99,11 @@ const AppViewSwitcher = ({ activeView, user, adminModeUnlocked, setActiveView, h
         return <ExportRecipeCommandSurface setActiveView={setActiveView} />;
       }
       return <NoAuthView section="Export Recipes" />;
+    case 'fleet':
+      if (user?.role === 'viewer') {
+        return <NoAuthView section="Fleet Console" />;
+      }
+      return <CDRFleetDashboard />;
     default:
       return <Home setActiveView={setActiveView} />;
   }
@@ -129,7 +136,7 @@ function AppInner() {
     if (!res.ok || !data.ok) throw new Error(data.error || 'Login failed');
     const usr: AuthUser = {
       ...data.user,
-      role: data.user.role.toLowerCase(),
+      role: data.user.role.toLowerCase() as Role,
     };
     login(usr, data.token);
   };
@@ -144,7 +151,7 @@ function AppInner() {
     if (!res.ok || !data.ok) throw new Error(data.error || 'Signup failed');
     const usr: AuthUser = {
       ...data.user,
-      role: data.user.role.toLowerCase(),
+      role: data.user.role.toLowerCase() as Role,
     };
     login(usr, data.token);
   };

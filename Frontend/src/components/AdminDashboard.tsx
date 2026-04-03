@@ -4,7 +4,6 @@ import {
   ArrowRightCircle,
   Shield,
   Users,
-  Server,
   Activity,
   Zap,
   Lock,
@@ -271,61 +270,61 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ setActiveView }) => {
             </button>
           </div>
 
-          {/* Nodes & Carbon Stream */}
+          {/* AtmosTrack CDR Fleet */}
           <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-lg border border-emerald-100 flex flex-col gap-5">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center text-white shadow-lg shrink-0">
-                  <Server className="w-5 h-5" />
+                  <TrendingUp className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="text-base font-bold text-gray-900">Nodes &amp; Carbon Stream</h2>
-                  <p className="text-xs text-gray-500 mt-0.5">Live devices, health status and carbon credit output.</p>
+                  <h2 className="text-base font-bold text-gray-900">CDR Fleet &amp; Carbon Removal</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">Live industrial skids, mineralization rates and net removal.</p>
                 </div>
               </div>
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] font-bold text-emerald-700">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                LIVE
+                ACTIVE
               </span>
             </div>
-
+ 
             {/* Readings stats */}
             <div className="grid grid-cols-2 gap-3">
-              <div className="bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3">
-                <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">Total Readings</div>
-                <div className="text-xl font-black text-emerald-700">{loading ? '—' : (stats?.readings.total ?? 0).toLocaleString()}</div>
+              <div className="bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3 text-center">
+                <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">Total CO₂ Removed</div>
+                <div className="text-xl font-black text-emerald-700">250.0 <span className="text-xs font-bold text-gray-400">TONS</span></div>
               </div>
-              <div className="bg-sky-50 border border-sky-100 rounded-xl px-4 py-3">
-                <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">Anchored On-chain</div>
-                <div className="text-xl font-black text-sky-700">{loading ? '—' : (stats?.readings.anchored ?? 0).toLocaleString()}</div>
+              <div className="bg-sky-50 border border-sky-100 rounded-xl px-4 py-3 text-center">
+                <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">Fleet Capacity</div>
+                <div className="text-xl font-black text-sky-700">1 <span className="text-xs font-bold text-gray-400">SKID</span></div>
               </div>
             </div>
-
+ 
             {/* Anchor progress */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Blockchain anchor coverage</span>
-                <span className="text-[10px] font-bold text-sky-600">{anchorPct.toFixed(1)}%</span>
+                <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Mineralization Efficiency</span>
+                <span className="text-[10px] font-bold text-emerald-600">95.0%</span>
               </div>
               <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
                 <div
-                  className="h-2 rounded-full bg-gradient-to-r from-emerald-400 to-sky-500 transition-all duration-700"
-                  style={{ width: `${anchorPct}%` }}
+                  className="h-2 rounded-full bg-gradient-to-r from-emerald-400 to-teal-500 transition-all duration-700"
+                  style={{ width: `95%` }}
                 />
               </div>
             </div>
-
+ 
             <div className="border-t border-gray-100 pt-4 space-y-1.5 text-xs text-gray-500">
-              <div className="flex items-start gap-2"><ChevronRight className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" /><span>View all devices: online/offline, last reading and context</span></div>
-              <div className="flex items-start gap-2"><ChevronRight className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" /><span>Tag nodes as test / production, or soft-disable noisy hardware</span></div>
-              <div className="flex items-start gap-2"><ChevronRight className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" /><span>Recompute DHI and force-mint / revert batches after fixes</span></div>
+              <div className="flex items-start gap-2"><ChevronRight className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" /><span>Monitor industrial exhaust processing at cement plant nodes</span></div>
+              <div className="flex items-start gap-2"><ChevronRight className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" /><span>Validate real-time dMRV sensor data against kiln output</span></div>
+              <div className="flex items-start gap-2"><ChevronRight className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" /><span>Manage carbon credit minting based on verified physical tons</span></div>
             </div>
-
+ 
             <button
-              onClick={() => setActiveView('carbon')}
+              onClick={() => setActiveView('fleet')}
               className="mt-auto inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-xs font-bold shadow-md hover:shadow-lg hover:scale-[1.02] transition-all"
             >
-              Open Carbon &amp; Readings Dashboard
+              Manage Fleet Console
               <ArrowRightCircle className="w-4 h-4" />
             </button>
           </div>

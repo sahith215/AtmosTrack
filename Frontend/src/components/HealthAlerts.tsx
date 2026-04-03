@@ -497,7 +497,7 @@ const HealthAlerts: React.FC = () => {
     liveData.location.lng == null;
 
   return (
-    <div className="pt-16 p-6 space-y-8 animate-fade-in min-h-screen bg-gradient-to-br from-gray-50 to-orange-50">
+    <div className="pt-28 p-6 space-y-8 animate-fade-in min-h-screen bg-gradient-to-br from-gray-50 to-orange-50">
       {/* Header */}
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-8">

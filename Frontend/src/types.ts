@@ -22,4 +22,5 @@ export type View =
   | 'adminUsers'
   | 'profile'
   | 'provenance'
-  | 'exportRecipes';
+  | 'exportRecipes'
+  | 'fleet';

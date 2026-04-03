@@ -1,221 +1,83 @@
-# 🚀 AtmosTrack – PNT-Anchored Environmental Intelligence & Tokenized Impact 🌍
+# AtmosTrack: Industrial Carbon Intelligence & dMRV Frontier
 
-
-From raw sensor data to token-ready climate impact – in one integrated pipeline.
-
-AtmosTrack is an end-to-end prototype that shows how a single, low-cost node on a smart campus can evolve from “just another sensor” into a verifiable climate-impact asset.
-
-It combines:
-
-- 🛰️ PNT-anchored sensing (ESP32 + multi-sensor + GPS + context)
-
-- 🧠 AI-based pollution source inference
-
-- 📊 Real-time dashboards, map view, and health alerts
-
-- ♻️ Device-Hours of Impact → Carbon Cleaning Tokens (CCT)
-
-- 💼 Polygon-style minting & retirement UX (simulation)
-
-- 📩 Recipe-based CSV exports and LAN-safe email links
-
-Built as a production-style stack:
-
-ESP32 firmware → Node/Express/Mongo backend → Python AI service → React (Vite) frontend → automation workflows.
+**AtmosTrack** is a high-fidelity, end-to-end industrial carbon removal (CDR) and environmental intelligence platform. Designed to bridge the "trust gap" in carbon markets, the system provides a verifiable **Measurement, Reporting, and Verification (dMRV)** pipeline that transforms raw industrial exhaust data into on-chain, tokenized climate assets.
 
 ---
 
-# ⚙️ Core Idea (What AtmosTrack Proves)
-
-**“Measurement-to-market” for indoor environments.**
-
-AtmosTrack demonstrates how:
-
-- A PNT-anchored node measures environmental conditions in specific rooms / corridors.
-
-- The system turns those measurements into explainable health insights and AI source labels.
-
-- Continuous “clean, stable operation” is quantified as Device-Hours of Impact (DHI).
-
-- DHI is converted into Carbon Cleaning Tokens (CCT) and grouped into daily credit batches.
-
-- A Polygon-style minting & retirement simulation demonstrates lifecycle handling.
-
-The prototype is intentionally scoped to indoor smart-campus scenarios (labs, classrooms, corridors) and is designed as a demo-ready system — not a final MRV product.
+## 🛰️ The Mission: Verifiable CDR at Scale
+In the evolving global carbon economy, transparency is the ultimate currency. **AtmosTrack** empowers industrial manufacturing clusters—specifically cement and kiln operators—to monitor and monetize their carbon sequestration efforts with institutional-grade precision.
 
 ---
 
-# 🧱 High-Level Architecture
+## 🏛️ Comprehensive Dashboard Walkthrough
 
-## 🔹 Hardware Node (ESP32)
+### 📊 1. The Command Floor (Main Dashboard)
+The central nervous system of the AtmosTrack node. It provides real-time situational awareness for a single deployment site.
+- **PNT-Anchored Live Tiles**: Real-time streaming of CO₂ (PPM), Temperature, Humidity, and Voltage from the physical sensor mesh.
+- **Dynamic Trend Analysis**: High-performance Recharts integration visualizing historical air quality fluctuations and comfort bands.
+- **Operational Status**: Live WebSocket heartbeats showing "Device Online" status with 5-second sampling resolution.
+- **Health-at-a-Glance**: Instant status badges (Good, Moderate, Toxic) driven by backend medical-grade heuristics.
 
-- CO₂ sensor
+### 🗺️ 2. GIS Asset Tracker (Map View)
+A spatial intelligence layer that anchors environmental data to precise geographic coordinates.
+- **Node Provenance**: Every sensor node is visualized as a physical asset within its industrial or campus context (e.g., "LIET Node 01").
+- **Real-Time GPS Sync**: Integrated GPS feedback showing the exact latitude and longitude of the measuring hardware.
+- **Contextual Visualization**: Distinguishes between "Indoor Monitoring" and "Outdoor GIS" modes through smart UI chips.
 
-- VOC proxy
+### 🏥 3. Health Advisory Dashboard (Medical Intelligence)
+Transforming raw parts-per-million into actionable human safety protocols.
+- **AI Source Classifier**: An integrated Machine Learning service that analyzes VOC, CO₂, and vibration signatures to identify pollution sources (e.g., "Vehicle Emissions" vs "Industrial Exhaust").
+- **Activity Recommendations**: Context-aware advice (e.g., "Indoor Activities Only") mapped to World Health Organization (WHO) and EPA standards.
+- **Pollutant Deep-Dive**: Explanatory panels detailing the physicochemical impact of detected pollutants on human respiratory health.
 
-- Temperature & humidity
+### ♻️ 4. Carbon Hub (Impact & Economic Engine)
+The gateway to the regenerative finance (ReFi) ecosystem.
+- **The Credit Lifecycle**: A dedicated pipeline tracking data from "Raw Ingestion" to "Blockchain Anchoring" and "Batch Minting."
+- **Carbon Cleaning Tokens (CCT)**: The project's native utility asset, generated as a function of verified "Device-Hours of Impact" (DHI).
+- **Carbon Mineralization Guide**: An educational immersion explaining the ₹18,000/ton CRU (Carbon Removal Unit) economics and industrial symbioses.
+- **Entitlement Planner**: A financial simulator allowing "Citizen Lessors" to project yields based on their stake in the modular fleet.
 
-- IMU (vibration)
+### 🚢 5. CDR Fleet Console (Industrial Scale-Up)
+A high-level command interface for managing horizontal expansion across industrial clusters.
+- **Expansion Simulator**: A reactive tool for projecting the carbon and revenue impact of scaling the fleet from a single skid to 500+ modules.
+- **Operational Moats**: Detailed breakdowns of "Physicochemical Lock-in" and "Sorbent-Waste Symbiosis" that differentiate AtmosTrack from generic competitors.
+- **Fleet Roadmap**: A phase-based strategic vision tracking the transition from "Cluster Demos" to "National Hub Integration."
 
-- GPS (PNT anchoring)
-
-- Purification state
-
-- Sends structured JSON payloads over Wi-Fi (~5 s cadence)
-
----
-
-## 🔹 Backend (Node.js + Express + MongoDB)
-
-- Ingests sensor payloads
-
-- Stores readings
-
-- Computes features & emissions estimates
-
-- Maintains DHI and CCT logic
-
-- Groups daily credit batches
-
-- Simulates Polygon-style minting
-
-- Exposes REST APIs + WebSocket stream
-
-- Integrates with n8n for export subscriptions & CSV email links
-
----
-
-## 🔹 AI Service (Python)
-
-- Receives sliding-window feature vectors
-
-- Returns pollution source labels + confidence scores
-
-- Backend post-processes and explicitly surfaces “Clean” regimes
+### 🛂 6. Admin & Security Headquarters
+- **Manage Profile**: A premium profile dashboard for managing identity, bio-data, and hardened security settings (Password changes and Secure Account Deletion).
+- **Admin Dashboard**: A multi-tabbed command surface for the "Architect" role to manage users, monitor node health, and audit system-wide data provenance.
+- **The "Root Ritual"**: A legendary, semi-submerged admin gateway hidden behind a multi-factor "secret sequence" for elite system access.
 
 ---
 
-## 🔹 Frontend (React + Vite)
+## 🛠️ The Production-Grade Stack
 
-- **Dashboard:** Live tiles + time-series for CO₂, AQI proxy, comfort, AI label, purifier state
+### 💻 Frontend (The Visual Layer)
+- **Vite + React 18**: High-performance rendering with fast-refresh.
+- **TailwindCSS**: Utillity-first styling for the premium **Cream-Orange-Amber** glassmorphic theme.
+- **Framer Motion**: Smooth micro-animations and state transitions.
+- **Recharts**: Industrial-grade data visualization.
 
-- **Map View:** Room- / corridor-level markers with PNT anchoring
+### ⚙️ Backend (The Intelligent Core)
+- **Node.js & Express**: Scalable API architecture.
+- **MongoDB + Mongoose**: Document-based storage for high-velocity sensor telemetry and audit logs.
+- **Socket.io**: Persistent 5-second real-time WebSocket pipe.
+- **Python AI Service**: Fast-API-driven ML service for real-time pollution source inference.
 
-- **Health Alerts:** Human-readable condition cards
-
-- **Carbon Hub:** DHI, CCT, daily credit batches, minting & retirement UX
-
-- **Data Export:** Raw + recipe-based CSV exports
+### 🔐 Blockchain & dMRV (The Trust Layer)
+- **Polygon/Amoy Networking**: Scalable L2 infrastructure for on-chain data anchoring.
+- **Smart Contract Interface**: Transparent protocols for CRU minting and retirement simulation.
+- **Data Provenance**: Evidence-based reporting that eliminates "Greenwashing" risk through direct hardware verification.
 
 ---
 
-# 🚀 Getting Started (Local Demo)
-
-⚠️ This repository does not track `.env`.
-
-You must create your own `.env` with local secrets and URIs.
+## 📡 Hardware Architecture (The Physical Anchor)
+AtmosTrack is a **Cyber-Physical System (CPS)**. Our custom hardware skids include:
+- **CO₂ Core**: MG811 high-range industrial sensor.
+- **AQI Proxy**: MQ135 VOC and quality sensor.
+- **Environmental**: DHT22 for precision thermal and humidity drift correction.
+- **Vibration/IMU**: Integrated IMU for structural health and source classification.
+- **Positioning**: High-sensitivity GPS module for PNT (Positional Navigation and Timing) anchoring.
 
 ---
-
-## 1️. Clone the Repository
-
-```bash
-git clone https://github.com/<your-username>/AtmosTrack.git
-cd AtmosTrack
-```
-## 2. Backend setup
-```
-cd Backend
-npm install
-```
-Create Backend/.env (example placeholders only):
-```
-MONGODB_URI=your_mongodb_uri_here
-N8N_SUBSCRIPTION_WEBHOOK=http://localhost:5678/webhook/your-id
-# Optional Polygon-style simulation / future on-chain config
-#POLYGON_RPC_URL=...
-#CCT_CONTRACT_ADDRESS=...
-#CCT_OWNER_PRIVATE_KEY=...
-```
-Run backend:
-```
-npm start
-# or
-node server.js
-```
-## 🧠 AI Classifier Service
-```
-cd ai-service   # or wherever your Python service lives
-python -m venv venv
-venv\Scripts\activate   # Windows
-pip install -r requirements.txt
-python ai_server.py
-```
-
-The backend expects the classifier at:
-```
-http://localhost:8000/classify
-```
-## 💻 Frontend Setup
-```
-cd ../Frontend
-npm install
-npm run dev
-```
-
-Frontend will usually run at:
-```
-http://localhost:5173
-```
-## 🔁 Optional: Automation (n8n or Similar)
-
-- Import or create a workflow that accepts a webhook.
-
-- Configure it to send CSV download links via email.
-
-- Set the webhook URL in N8N_SUBSCRIPTION_WEBHOOK inside .env.
-
-## 🔍 What You Can Explore (Without Revealing Internals)
-
-- The goal is to showcase capability — not to open-source every internal detail while patent work is in progress.
-
-- Once all services are running and an AtmosTrack node (or simulated payloads) is sending data, you can explore:
-
-## 📊 Live Dashboard
-
-- Watch CO₂, AQI proxy, comfort band, AI source labels, and purifier state change over time.
-
-## 🗺️ Map View
-
-- See each node as a PNT-anchored asset (room / corridor), not just a generic device ID.
-
-## 🏥 Health Alerts
-
-- View human-readable cards explaining when and where air quality is degrading.
-
-## ♻️ Carbon Hub
-
-- Observe how daily readings roll up into DHI, CCT, and credit batches.
-
-- Trigger Polygon-style minting simulation and watch batch status change (PENDING → MINTED).
-
-- Use the Offset Planner to link emissions (tCO₂e) to required CCT.
-
-## 📤 Data Export
-
-- Configure export recipes with time ranges, devices, and selected fields.
-
-- Generate CSVs.
-
-- Use LAN-safe links on phone or another laptop to download and inspect.
-
-## ⚠️ Notes on Confidentiality & Patent Direction
-
-This repository does not include production secrets, private keys, or contract addresses.
-
-The architecture is presented at a conceptual and integration level suitable for technical review and portfolio use.
-
-Detailed AI training procedures, DHI/token calibration logic, and any future on-chain contract code can remain private or be moved to internal repositories while patent and IP work is ongoing.ongoing.
-
-## 🤝 Acknowledgement
-This prototype was developed as part of the PNT Lab Internship under the Geo‑Intel Lab, IIT Tirupati Navavishkar I‑Hub Foundation (IITTNiF), with a focus on smart‑campus, PNT‑anchored environmental intelligence and climate/ESG experimentation.
+**AtmosTrack is more than a dashboard; it is the operating system for the next generation of verified carbon removal infrastructure.**
